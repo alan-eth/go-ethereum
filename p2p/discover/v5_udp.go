@@ -704,7 +704,7 @@ func (t *UDPv5) handlePacket(rawpacket []byte, fromAddr netip.AddrPort) error {
 			t.unhandled <- up
 			return nil
 		}
-		t.log.Info("Bad discv5 packet", "id", fromID, "addr", addr, "err", err)
+		t.log.Debug("Bad discv5 packet", "id", fromID, "addr", addr, "err", err)
 		return err
 	}
 	if fromNode != nil {
