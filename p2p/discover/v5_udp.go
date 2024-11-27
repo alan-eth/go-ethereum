@@ -165,7 +165,7 @@ func newUDPv5(conn UDPConn, ln *enode.LocalNode, cfg Config) (*UDPv5, error) {
 		callDoneCh:    make(chan *callV5),
 		sendCh:        make(chan sendRequest),
 		respTimeoutCh: make(chan *callTimeout),
-		unhandled:     cfg.Unhandled,
+		unhandled:     cfg.Unhandled, // 当前是没有设置这个的
 		// state of dispatch
 		codec:            v5wire.NewCodec(ln, cfg.PrivateKey, cfg.Clock, cfg.V5ProtocolID),
 		activeCallByNode: make(map[enode.ID]*callV5),
@@ -208,15 +208,18 @@ func (t *UDPv5) Ping(n *enode.Node) error {
 
 // Resolve searches for a specific node with the given ID and tries to get the most recent
 // version of the node record for it. It returns n if the node could not be resolved.
+// 尝试解析一个节点的最新版本，如果无法解析则返回n
 func (t *UDPv5) Resolve(n *enode.Node) *enode.Node {
 	if intable := t.tab.getNode(n.ID()); intable != nil && intable.Seq() > n.Seq() {
 		n = intable
 	}
 	// Try asking directly. This works if the node is still responding on the endpoint we have.
+
 	if resp, err := t.RequestENR(n); err == nil {
 		return resp
 	}
 	// Otherwise do a network lookup.
+
 	result := t.Lookup(n.ID())
 	for _, rn := range result {
 		if rn.ID() == n.ID() && rn.Seq() > n.Seq() {
@@ -323,6 +326,7 @@ func (t *UDPv5) newLookup(ctx context.Context, target enode.ID) *lookup {
 // lookupWorker performs FINDNODE calls against a single node during lookup.
 func (t *UDPv5) lookupWorker(destNode *enode.Node, target enode.ID) ([]*enode.Node, error) {
 	var (
+		// 这里会算多一些举例，比如target和destNode的距离是255，那么这里会算出[255, 256, 254]
 		dists = lookupDistances(target, destNode.ID())
 		nodes = nodesByDistance{target: target}
 		err   error
@@ -372,6 +376,7 @@ func (t *UDPv5) ping(n *enode.Node) (uint64, error) {
 }
 
 // RequestENR requests n's record.
+// 这个逻辑是通过findnode来请求的，然后返回的是距离为0的节点，也就是n的节点
 func (t *UDPv5) RequestENR(n *enode.Node) (*enode.Node, error) {
 	nodes, err := t.findnode(n, []uint{0})
 	if err != nil {
@@ -656,7 +661,7 @@ func (t *UDPv5) readLoop() {
 
 	buf := make([]byte, maxPacketSize)
 	for range t.readNextCh {
-		nbytes, from, err := t.conn.ReadFromUDPAddrPort(buf)
+		nbytes, from, err := t.conn.ReadFromUDPAddrPort(buf) // 从unhandled中读取数据
 		if netutil.IsTemporaryError(err) {
 			// Ignore temporary read errors.
 			t.log.Debug("Temporary UDP read error", "err", err)
@@ -690,7 +695,7 @@ func (t *UDPv5) dispatchReadPacket(from netip.AddrPort, content []byte) bool {
 func (t *UDPv5) handlePacket(rawpacket []byte, fromAddr netip.AddrPort) error {
 	addr := fromAddr.String()
 	fromID, fromNode, packet, err := t.codec.Decode(rawpacket, addr)
-	if err != nil {
+	if err != nil { // 这里目前不会走到
 		if t.unhandled != nil && v5wire.IsInvalidHeader(err) {
 			// The packet seems unrelated to discv5, send it to the next protocol.
 			// t.log.Trace("Unhandled discv5 packet", "id", fromID, "addr", addr, "err", err)
@@ -699,7 +704,7 @@ func (t *UDPv5) handlePacket(rawpacket []byte, fromAddr netip.AddrPort) error {
 			t.unhandled <- up
 			return nil
 		}
-		t.log.Debug("Bad discv5 packet", "id", fromID, "addr", addr, "err", err)
+		t.log.Info("Bad discv5 packet", "id", fromID, "addr", addr, "err", err)
 		return err
 	}
 	if fromNode != nil {
@@ -790,6 +795,7 @@ var (
 
 // handleWhoareyou resends the active call as a handshake packet.
 func (t *UDPv5) handleWhoareyou(p *v5wire.Whoareyou, fromID enode.ID, fromAddr netip.AddrPort) {
+	// 这个是为了比如我们发送了一个findnode请求，然后对方返回了一个whoareyou，这个时候我们需要重新发送findnode请求
 	c, err := t.matchWithCall(fromID, p.Nonce)
 	if err != nil {
 		t.log.Debug("Invalid "+p.Name(), "addr", fromAddr, "err", err)

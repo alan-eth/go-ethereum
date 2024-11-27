@@ -148,6 +148,7 @@ func (tr *tableRevalidation) handleResponse(tab *Table, resp revalidationRespons
 	// Store potential seeds in database.
 	// This is done via defer to avoid holding Table lock while writing to DB.
 	defer func() {
+		// If the node is validated and has been checked multiple times, store it in the DB.
 		if n.isValidatedLive && n.livenessChecks > 5 {
 			tab.db.UpdateNode(resp.n.Node)
 		}
@@ -156,6 +157,8 @@ func (tr *tableRevalidation) handleResponse(tab *Table, resp revalidationRespons
 	// Remaining logic needs access to Table internals.
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
+
+	// If the node didn't respond, we reduce the liveness checks and move it to the slow list.
 
 	if !resp.didRespond {
 		n.livenessChecks /= 3
@@ -173,6 +176,7 @@ func (tr *tableRevalidation) handleResponse(tab *Table, resp revalidationRespons
 	n.isValidatedLive = true
 	tab.log.Debug("Node revalidated", "b", b.index, "id", n.ID(), "checks", n.livenessChecks, "q", n.revalList.name)
 	var endpointChanged bool
+	// 如果节点的记录有更新，将新记录添加到bucket中
 	if resp.newRecord != nil {
 		_, endpointChanged = tab.bumpInBucket(b, resp.newRecord, false)
 	}
@@ -207,6 +211,7 @@ func (list *revalidationList) get(now mclock.AbsTime, rand randomSource, exclude
 	if len(list.nodes) == 0 {
 		return nil
 	}
+	// 尝试多次获取，如果获取的节点在exclude中，则重新获取
 	for i := 0; i < len(list.nodes)*3; i++ {
 		n := list.nodes[rand.Intn(len(list.nodes))]
 		_, excluded := exclude[n.ID()]
@@ -221,6 +226,7 @@ func (list *revalidationList) schedule(now mclock.AbsTime, rand randomSource) {
 	list.nextTime = now.Add(time.Duration(rand.Int63n(int64(list.interval))))
 }
 
+// push adds a node to the list and schedules the next revalidation if needed.
 func (list *revalidationList) push(n *tableNode, now mclock.AbsTime, rand randomSource) {
 	list.nodes = append(list.nodes, n)
 	if list.nextTime == never {

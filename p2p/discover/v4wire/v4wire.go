@@ -263,6 +263,7 @@ func Encode(priv *ecdsa.PrivateKey, req Packet) (packet, hash []byte, err error)
 	copy(packet[macSize:], sig)
 	// Add the hash to the front. Note: this doesn't protect the packet in any way.
 	hash = crypto.Keccak256(packet[macSize:])
+	// Sign the hash，放到packet的前32位
 	copy(packet, hash)
 	return packet, hash, nil
 }

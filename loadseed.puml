@@ -1,0 +1,63 @@
+@startuml
+'https://plantuml.com/activity-diagram-beta
+
+|Table|
+start
+:loadSeedNodes;
+|DB|
+:调用QuerySeeds获取n个随机种子节点seeds;
+partition QuerySeeds {
+    repeat
+    :构造随机的node ID;
+    :查询levelDB的下一个node;
+    if (node上次收到的PONG请求超过maxAge\n 已经在seeds中) then(y)
+    else(n)
+        :加入到seeds中;
+    endif
+    repeat while (seeds个数 < n && 遍历次数 < 5n);
+}
+
+|Table|
+:追加bootNodes到seeds;
+:遍历节点seeds;
+repeat
+
+partition 路由表添加seed节点 {
+    if (自身节点ID?) is (no) then
+      :continue;
+    else (yes)
+    :获取seed节点的bucket;
+    partition bumpInBucket {
+     if (查询bucket中是否存在seed节点) then (y)
+        if (ip 发生变更) then (y)
+            if (ip所在子网节点个数超过上限) then (yes)
+            else (no)
+                :将seed节点加入到fast revalidation列表中;
+            endif
+        endif
+     endif
+    }
+    if (当前的bucket中的entries节点超过bucketSize) then
+    partition addReplacement {
+        if (bucket的replacement列表中存在seed节点\n或者尝试加入ip已经超过子网上限) then (y)
+        else(n)
+           :将seed节点插入到replacement队首，并在队列超过限制时删除队尾元素removed;
+           :删除removed的在路由表的ips集合中的ip信息;
+        endif
+    }
+    :尝试将ip加入到ips集合中;
+    :将seed节点加入到路由表的entries列表中;
+    :尝试将replacement列表中可能存在的seed节点记录删除;
+    partition nodeAdded {
+        :设置节点加入到entries的时间;
+        :将节点加入到fast revalidation列表;
+    }
+    endif
+    endif
+}
+
+repeat while (seeds中还有节点);
+
+stop
+
+@enduml

@@ -84,7 +84,7 @@ func (m SchemeMap) NodeAddr(r *Record) []byte {
 
 // Record represents a node record. The zero value is an empty record.
 type Record struct {
-	seq       uint64 // sequence number
+	seq       uint64 // sequence number 这个相当于版本号
 	signature []byte // the signature
 	raw       []byte // RLP encoded record
 	pairs     []pair // sorted list of all key/value pairs

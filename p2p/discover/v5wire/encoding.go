@@ -26,6 +26,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/log"
 	"hash"
 
 	"github.com/ethereum/go-ethereum/common/mclock"
@@ -64,12 +65,12 @@ type (
 
 	handshakeAuthData struct {
 		h struct {
-			SrcID      enode.ID
-			SigSize    byte // signature data
-			PubkeySize byte // offset of
+			SrcID      enode.ID // 这里是本地节点的ID
+			SigSize    byte     // signature data
+			PubkeySize byte     // offset of
 		}
 		// Trailing variable-size data.
-		signature, pubkey, record []byte
+		signature, pubkey, record []byte // pubkey是当前节点创建的临时公钥，针对当前的session创建的。
 	}
 
 	messageAuthData struct {
@@ -167,7 +168,7 @@ func NewCodec(ln *enode.LocalNode, key *ecdsa.PrivateKey, clock mclock.Clock, pr
 		localnode:  ln,
 		privkey:    key,
 		sc:         NewSessionCache(1024, clock),
-		protocolID: DefaultProtocolID,
+		protocolID: DefaultProtocolID, // discv5，写死的
 		decbuf:     make([]byte, maxPacketSize),
 	}
 	if protocolID != nil {
@@ -187,35 +188,47 @@ func (c *Codec) Encode(id enode.ID, addr string, packet Packet, challenge *Whoar
 		msgData []byte
 		err     error
 	)
+	var packetName = packet.Name()
+
 	switch {
 	case packet.Kind() == WhoareyouPacket:
 		head, err = c.encodeWhoareyou(id, packet.(*Whoareyou))
+		log.Info("send packet(whoareyou)>>>>>>>>", "packet", packetName, "to", addr)
 	case challenge != nil:
 		// We have an unanswered challenge, send handshake.
 		head, session, err = c.encodeHandshakeHeader(id, addr, challenge)
+		log.Info("send packet(challenge)>>>>>>>>", "packet", packetName, "to", addr)
 	default:
 		session = c.sc.session(id, addr)
 		if session != nil {
 			// There is a session, use it.
 			head, err = c.encodeMessageHeader(id, session)
+			log.Info("send packet(session)>>>>>>>>", "packet", packetName, "to", addr)
 		} else {
 			// No keys, send random data to kick off the handshake.
+			// 没有密钥，发送随机数据以启动握手。
 			head, msgData, err = c.encodeRandom(id)
+			packetName = "random"
+			log.Info("send packet(random)>>>>>>>>", "packet", packetName, "to", addr)
 		}
 	}
+
 	if err != nil {
 		return nil, Nonce{}, err
 	}
 
 	// Generate masking IV.
+	// 随机生成掩码IV。
 	if err := c.sc.maskingIVGen(head.IV[:]); err != nil {
 		return nil, Nonce{}, fmt.Errorf("can't generate masking IV: %v", err)
 	}
 
 	// Encode header data.
 	c.writeHeaders(&head)
+	//log.Info(fmt.Sprintf("header================>, %+v, %+x", head, head.Nonce))
 
 	// Store sent WHOAREYOU challenges.
+	// 如果是发起whoareu 有的话，不加密 因为这个算是发起建立握手的请求
 	if challenge, ok := packet.(*Whoareyou); ok {
 		challenge.ChallengeData = bytesCopy(&c.buf)
 		c.sc.storeSentHandshake(id, addr, challenge)
@@ -236,6 +249,8 @@ func (c *Codec) EncodeRaw(id enode.ID, head Header, msgdata []byte) ([]byte, err
 	c.writeHeaders(&head)
 
 	// Apply masking.
+	// 这里会把buf中16开始的数据进行掩码处理，直接加密了。
+	// aes 掩码
 	masked := c.buf.Bytes()[sizeofMaskingIV:]
 	mask := head.mask(id)
 	mask.XORKeyStream(masked[:], masked[:])
@@ -266,7 +281,7 @@ func (c *Codec) makeHeader(toID enode.ID, flag byte, authsizeExtra int) Header {
 		panic(fmt.Errorf("BUG: invalid packet header flag %x", flag))
 	}
 	authsize += authsizeExtra
-	if authsize > int(^uint16(0)) {
+	if authsize > int(^uint16(0)) { // 0xffff 65535
 		panic(fmt.Errorf("BUG: auth size %d overflows uint16", authsize))
 	}
 	return Header{
@@ -293,6 +308,7 @@ func (c *Codec) encodeRandom(toID enode.ID) (Header, []byte, error) {
 	head.AuthData = c.headbuf.Bytes()
 
 	// Fill message ciphertext buffer with random bytes.
+	// 相当于清空了切片。[:0]，但是cap还有，长度为0。
 	c.msgctbuf = append(c.msgctbuf[:0], make([]byte, randomPacketMsgSize)...)
 	crand.Read(c.msgctbuf)
 	return head, c.msgctbuf, nil
@@ -301,6 +317,7 @@ func (c *Codec) encodeRandom(toID enode.ID) (Header, []byte, error) {
 // encodeWhoareyou encodes a WHOAREYOU packet.
 func (c *Codec) encodeWhoareyou(toID enode.ID, packet *Whoareyou) (Header, error) {
 	// Sanity check node field to catch misbehaving callers.
+	// 健全性检查节点字段以捕获行为不端的调用方。
 	if packet.RecordSeq > 0 && packet.Node == nil {
 		panic("BUG: missing node in whoareyou with non-zero seq")
 	}
@@ -369,16 +386,20 @@ func (c *Codec) makeHandshakeAuth(toID enode.ID, addr string, challenge *Whoarey
 	if err := challenge.Node.Load((*enode.Secp256k1)(remotePubkey)); err != nil {
 		return nil, nil, errors.New("can't find secp256k1 key for recipient")
 	}
+	// 生成一个临时的密钥
+	// ecdsa
 	ephkey, err := c.sc.ephemeralKeyGen()
 	if err != nil {
 		return nil, nil, errors.New("can't generate ephemeral key")
 	}
+
 	ephpubkey := EncodePubkey(&ephkey.PublicKey)
 	auth.pubkey = ephpubkey[:]
 	auth.h.PubkeySize = byte(len(auth.pubkey))
 
 	// Add ID nonce signature to response.
 	cdata := challenge.ChallengeData
+	// 生成了一个签名
 	idsig, err := makeIDSignature(c.sha256, c.privkey, cdata, ephpubkey[:], toID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("can't sign: %v", err)
@@ -393,6 +414,7 @@ func (c *Codec) makeHandshakeAuth(toID enode.ID, addr string, challenge *Whoarey
 	}
 
 	// Create session keys.
+	// 派发密钥，生成一个新的session，包含readKey和writeKey， remotePubkey是从challenge中获取的secp256k1公钥
 	sec := deriveKeys(sha256.New, ephkey, remotePubkey, c.localnode.ID(), challenge.Node.ID(), cdata)
 	if sec == nil {
 		return nil, nil, errors.New("key derivation failed")
@@ -445,7 +467,7 @@ func (c *Codec) Decode(inputData []byte, addr string) (src enode.ID, n *enode.No
 	// Unmask the static header.
 	var head Header
 	copy(head.IV[:], input[:sizeofMaskingIV])
-	mask := head.mask(c.localnode.ID())
+	mask := head.mask(c.localnode.ID()) // 用id生成一个掩码 进行解密，aes是对称的。
 	staticHeader := input[sizeofMaskingIV:sizeofStaticPacketData]
 	mask.XORKeyStream(staticHeader, staticHeader)
 
@@ -465,6 +487,7 @@ func (c *Codec) Decode(inputData []byte, addr string) (src enode.ID, n *enode.No
 
 	// Delete timed-out handshakes. This must happen before decoding to avoid
 	// processing the same handshake twice.
+	// 删除超时的握手。这必须在解码之前发生，以避免处理同一个握手两次。
 	c.sc.handshakeGC()
 
 	// Decode auth part and message.
@@ -479,6 +502,9 @@ func (c *Codec) Decode(inputData []byte, addr string) (src enode.ID, n *enode.No
 		p, err = c.decodeMessage(addr, &head, headerData, msgData)
 	default:
 		err = errInvalidFlag
+	}
+	if p != nil {
+		log.Info(fmt.Sprintf("receive packet(%d)<<<<<<<<<", int(head.Flag)), "packet", p.Name(), "from", addr)
 	}
 	return head.src, n, p, err
 }

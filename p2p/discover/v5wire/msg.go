@@ -70,6 +70,8 @@ type (
 
 		// Node is the locally known node record of recipient.
 		// This must be set by the caller of Encode.
+		// Node 是接收者的本地已知节点记录。
+		// 这必须由 Encode 的调用者设置。
 		Node *enode.Node
 
 		sent mclock.AbsTime // for handshake GC.
@@ -92,7 +94,7 @@ type (
 	// FINDNODE is a query for nodes in the given bucket.
 	Findnode struct {
 		ReqID     []byte
-		Distances []uint
+		Distances []uint // XOR distances of the target nodes
 
 		// OpID is for debugging purposes and is not part of the packet encoding.
 		// It identifies the 'operation' on behalf of which the request was sent.
@@ -139,6 +141,7 @@ func DecodeMessage(ptype byte, body []byte) (Packet, error) {
 	default:
 		return nil, fmt.Errorf("unknown packet type %d", ptype)
 	}
+	// Decode the message body.
 	if err := rlp.DecodeBytes(body, dec); err != nil {
 		return nil, err
 	}

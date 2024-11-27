@@ -1,0 +1,30 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+
+autonumber
+
+'Alice -> Bob: Authentication Request
+'Bob --> Alice: Authentication Response
+'
+'Alice -> Bob: Another authentication Request
+'Alice <-- Bob: another authentication Response
+opt 24小时内未收到ping消息 \n 或者失败次数 > 5
+
+NodeA -> NodeB: 发送PING消息
+activate NodeB
+NodeB -> NodeA: 发送PONG消息
+NodeB -> NodeB: 加入inbound节点
+NodeB -> NodeB: 更新LastPingReceived时间
+deactivate NodeB
+end opt
+
+NodeA -> NodeB: 发送FINDNODE消息
+activate NodeB
+NodeB -> NodeB: 查找本地路由表距离最近的closest节点列表
+loop
+NodeB -> NodeA: 每12个节点组装packet发送NEIGHBORS消息
+end loop
+deactivate NodeB
+
+
+@enduml

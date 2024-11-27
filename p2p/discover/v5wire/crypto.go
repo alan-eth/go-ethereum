@@ -121,10 +121,12 @@ func deriveKeys(hash hashFn, priv *ecdsa.PrivateKey, pub *ecdsa.PublicKey, n1, n
 	info = append(info, n1[:]...)
 	info = append(info, n2[:]...)
 
+	// 这里创建了一个共享的密钥
 	eph := ecdh(priv, pub)
 	if eph == nil {
 		return nil
 	}
+	// 这里使用HKDF算法来生成密钥，入参如果一样的话，生成的密钥也是一样的。
 	kdf := hkdf.New(hash, eph, challenge, info)
 	sec := session{writeKey: make([]byte, aesKeySize), readKey: make([]byte, aesKeySize)}
 	kdf.Read(sec.writeKey)

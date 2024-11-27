@@ -1,0 +1,38 @@
+@startuml
+start
+
+:运行lookup.run();
+repeat
+partition advance() {
+    repeat
+    partition startQueries() {
+        if (首次查询) then(y)
+            :从本地的路由表中查找最近的邻居节点;
+        endif
+        while(未遍历完result的nodes节点 \n且 查询次数小于alpha ？)
+            partition query {
+                :进行findNodes查询;
+                :写入trackRequest chan;
+                partition handleTrackRequest() {
+                    if (处理成功) then(y)
+                        :更新level db的失败次数=0;
+                    else(n)
+                        :更新level db的失败次数 + 1;
+                    endif
+                    :定位node id对应的bucket;
+                    if (node的失败次数 > maxFindnodeFailures && bucket的entries个数超过1/4 ?) then (y)
+                        :将node从bucket中删除(deleteInBucket);
+                    endif
+                    :遍历节点发现的邻居节点执行handleAddNode;
+                }
+            }
+        endwhile
+    }
+    :更新lookup的result nodes列表;
+    repeat while(继续？);
+}
+repeat while(继续？);
+
+stop
+
+@enduml

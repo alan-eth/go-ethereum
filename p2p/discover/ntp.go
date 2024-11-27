@@ -103,6 +103,7 @@ func sntpDrift(measurements int) (time.Duration, error) {
 	// Calculate average drift (drop two extremities to avoid outliers)
 	slices.Sort(drifts)
 
+	// 去掉一个最高分，去掉一个最低分，计算平均shift
 	drift := time.Duration(0)
 	for i := 1; i < len(drifts)-1; i++ {
 		drift += drifts[i]

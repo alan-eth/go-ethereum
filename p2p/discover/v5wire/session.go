@@ -34,7 +34,7 @@ const handshakeTimeout = time.Second
 // state for in-progress handshakes in the Discovery v5 wire protocol.
 type SessionCache struct {
 	sessions   lru.BasicLRU[sessionID, *session]
-	handshakes map[sessionID]*Whoareyou
+	handshakes map[sessionID]*Whoareyou // 等待完成握手的节点
 	clock      mclock.Clock
 
 	// hooks for overriding randomness.

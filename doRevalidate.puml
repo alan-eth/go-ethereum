@@ -1,0 +1,40 @@
+@startuml
+start
+:执行revalidation.run()方法;
+while(依次遍历fast 和slow两个revalidationList)
+if (到达定时任务执行时间?) then(y)
+    :从list随机抽取一个不在activeReq中的tableNode;
+    partition startRequest {
+        :将tableNode加入到activeReq集合总表示正在检验;
+        partition doRevalidate {
+            :发送ping请求;
+            if (ping返回的ENR Seq > tableNode的Seq) then(y)
+                :请求node获取最新版本的ENR数据;
+            endif
+            :写入revalResponse channel;
+            partition handleResponse() {
+                if (节点没有响应) then(y)
+                    :扣减节点的livenessChecks为原来的1/3;
+                    if (节点的livenessChecks <= 0 ?) then(y)
+                        :从bucket中删除节点的记录;
+                    else(n)
+                        :将节点移动到fast revalidation list中;
+                    endif
+                else(n)
+                    :增加节点的livenessChecks;
+                    if (节点ENR有变更) then(y)
+                        :执行bumpInBucket更新路由表中节点的记录;
+                    endif
+                    if (端口没有发生变更) then(y)
+                        :将节点移动到slow revalidation list中;
+                    endif
+                endif
+            }
+        }
+    }
+endif
+:更新下次执行时间;
+endwhile
+stop
+
+@enduml

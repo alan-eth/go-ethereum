@@ -1,0 +1,229 @@
+@startuml
+
+class Table {
+    # [17]*bucket buckets
+    # []*enode.Node nursery
+    # netutil.DistinctNetSet ips
+    # tableRevalidation revalidation
+    # *enode.DB db
+    # transport net
+    # Config cfg
+}
+
+class Config {
+    + *ecdsa.PrivateKey PrivateKey
+    + *netutil.Netlist NetRestrict
+    + []*enode.Node Bootnodes
+    + time.Duration PingInterval
+    + time.Duration RefreshInterval
+}
+
+interface transport {
+    + Self() *enode.Node
+    + RequestENR(*enode.Node) (*enode.Node, error)
+    # lookupRandom() []*enode.Node
+    # lookupSelf() []*enode.Node
+    # ping(*enode.Node) (seq uint64, err error);
+}
+
+class UDPv4 implements transport {
+    # UDPConn conn
+    # *netutil.Netlist netrestrict
+    # *ecdsa.PrivateKey priv
+    # *enode.LocalNode localNode
+    # *enode.DB db
+    # *Table tab
+    # chan *replyMatcher addReplyMatcher
+    # chan reply gotreply
+}
+
+UDPv4 --> enode.DB
+UDPv4 --> enode.LocalNode
+
+
+
+class UDPv5 implements transport {
+    # UDPConn conn
+    # *Table tab
+    # *netutil.Netlist netrestrict
+    # *ecdsa.PrivateKey priv
+    # *enode.LocalNode localNode
+    # *enode.DB db
+    # enr.IdentityScheme validSchemes
+    # *talkSystem talk
+    # chan ReadPacket packetInCh
+    # chan struct{} readNextCh
+    # chan *callV5 callCh
+    # chan *callV5 callDoneCh
+    # chan sendRequest sendCh
+    # chan<- ReadPacket unhandled
+    # codecV5 codec
+    # map[enode.ID]*callV5 activeCallByNode
+    # map[v5wire.Nonce]*callV5 activeCallByAuth
+    # map[enode.ID][]*callV5 callQueue
+}
+
+UDPv5 --> enode.LocalNode
+UDPv5 --> enode.DB
+UDPv5 --> talkSystem
+UDPv5 --> callV5
+UDPv5 --> codecV5
+
+class talkSystem {
+    # *UDPv5 transport
+    # map[string]TalkRequestHandler handlers
+    # chan struct{} slots
+    # time.Time lastLog
+    # int dropCount
+}
+
+class enode.LocalNode {
+    # ID id
+    # *ecdsa.PrivateKey key
+    # *DB db
+    # uint64 seq
+    # time.Time update
+    # map[string]enr.Entry entries
+    # lnEndpoint endpoint4
+    # lnEndpoint endpoint6
+}
+
+interface codecV5 {
+	Encode(enode.ID, string, v5wire.Packet, *v5wire.Whoareyou) ([]byte, v5wire.Nonce, error)
+	Decode([]byte, string) (enode.ID, *enode.Node, v5wire.Packet, error)
+}
+
+class Codec implements codecV5 {
+    # hash.Hash sha256
+    # *enode.LocalNode localnode
+    # *ecdsa.PrivateKey privkey
+    # *SessionCache sc
+    # [6]byte protocolID
+    # bytes.Buffer buf
+    # bytes.Buffer headbuf
+    # bytes.Buffer msgbuf
+    # []byte msgctbuf
+    # []byte decbuf
+    # bytes.Reader reader
+}
+
+Codec --> SessionCache
+Codec --> enode.LocalNode
+
+class SessionCache {
+    # lru.BasicLRU[sessionID, *session] sessions
+    # map[sessionID]*Whoareyou handshakes
+}
+SessionCache --> sessionID
+SessionCache --> session
+
+class sessionID {
+    # enode.ID id
+    # string addr
+}
+
+class session {
+    # []byte writeKey
+    # []byte readKey
+    # uint32 nonceCounter
+}
+
+
+class callV5 {
+    # enode.ID id
+    # netip.AddrPort addr
+    # *enode.Node node
+    # v5wire.Packet packet
+    # byte responseType
+    # []byte reqid
+    # chan v5wire.Packet ch
+    # chan error err
+    # v5wire.Nonce nonce
+    # int handshakeCount
+    # *v5wire.Whoareyou challenge
+    # mclock.Timer timeout
+}
+
+class talkSystem {
+
+}
+
+
+class enode.DB {
+    # *leveldb.DB lvl
+    # sync.Once runner
+}
+
+class tableRevalidation {
+    # revalidationList fast
+    # revalidationList slow
+    # map[enode.ID]struct{} activeReq
+}
+Table --> bucket
+Table --> enode.Node
+Table --> enode.DB
+Table --> netutil.DistinctNetSet
+Table --> tableRevalidation
+Table --> transport
+Table --> Config
+
+
+tableRevalidation --> revalidationList
+
+class bucket {
+    # []*tableNode entries
+    # []*tableNode replacements
+    # netutil.DistinctNetSet ips
+    # int index
+}
+
+bucket --> tableNode
+bucket --> netutil.DistinctNetSet
+
+class tableNode extends enode.Node {
+    # *revalidationList revalList
+    # time.Time addedToTable
+    # time.Time addedToBucket
+    # uint livenessChecks
+    # bool isValidatedLive
+}
+
+class enode.Node {
+   # enr.Record r
+   # ID id
+   # netip.Addr ip
+   # uint16 udp
+   # uint16 tcp
+}
+enode.Node --> enr.Record
+
+class enr.Record {
+    # uint64 seq
+    # []byte signature
+    # []byte raw
+    # []pair pairs
+}
+
+class pair {
+    # string k
+    # rlp.RawValue v
+}
+enr.Record --> pair
+
+class netutil.DistinctNetSet {
+    + uint Subnet
+    + uint Limit
+    # map[netip.Prefix]uint members
+}
+
+class revalidationList {
+    # []*tableNode nodes
+    # mclock.AbsTime nextTime
+    # time.Duration interval
+    # string name
+}
+
+revalidationList --> tableNode
+
+
+@enduml

@@ -1,0 +1,51 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+
+autonumber
+
+'opt 24小时内未收到ping消息 \n 或者失败次数 > 5
+'
+'NodeA -> NodeB: 发送PING消息
+'activate NodeB
+'
+'NodeB -> NodeA: 发送PONG消息
+'NodeB -> NodeB: 加入inbound节点
+'NodeB -> NodeB: 更新LastPingReceived时间
+'deactivate NodeB
+'end opt
+'
+'NodeA -> NodeB: 发送FINDNODE消息
+'activate NodeB
+'NodeB -> NodeB: 查找本地路由表距离最近的closest节点列表
+'loop
+'NodeB -> NodeA: 每12个节点组装packet发送NEIGHBORS消息
+'end loop
+'deactivate NodeB
+
+NodeA -> NodeA: 编码Findnode packet
+group sessionCache不存在会话
+    NodeA -> NodeA: 使用随机消息替换Findnode packet，\n并缓存原始Findnode消息
+NodeA -> NodeB: 发送随机消息(flag = message)
+'activate NodeB
+    NodeB -> NodeB: 解密消息失败，识别为Unknown消息
+    NodeB -> NodeA: 发送Whoareyou消息(flag = whoyouare)
+'deactivate NodeB
+NodeA -> NodeA: 生成共享密钥并保存到sessionCache中
+NodeA -> NodeA: 使用原始Findnode消息作为消息体进行编码
+NodeA -> NodeB: 发送Findnode消息(flag=handshake)
+
+NodeB -> NodeB: 解密成功，识别为Findnode消息
+NodeB -> NodeB: 计算共享密钥并保存到sessionCache中
+note right NodeB
+此时完成握手
+end note
+NodeB -> NodeB: 查找本地路由表距离最近的closest节点列表
+loop
+    NodeB -> NodeA: 分组生成packet发送Nodes消息，每组消息体不超过1000B
+end loop
+
+
+end group
+
+
+@enduml

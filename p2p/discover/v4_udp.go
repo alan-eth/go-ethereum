@@ -91,6 +91,8 @@ type UDPv4 struct {
 // Our implementation handles this by storing a callback function for
 // each pending reply. Incoming packets from a node are dispatched
 // to all callback functions for that node.
+// The callback function is responsible for determining whether the
+// reply is acceptable and whether the request is complete.
 type replyMatcher struct {
 	// these fields must match in the reply.
 	from  enode.ID
@@ -148,10 +150,14 @@ func ListenV4(c UDPConn, ln *enode.LocalNode, cfg Config) (*UDPv4, error) {
 		return nil, err
 	}
 	t.tab = tab
+	// 循环刷新bucket
 	go tab.loop()
 
 	t.wg.Add(2)
+	// 循环处理消息
 	go t.loop()
+
+	// 循环读取消息
 	go t.readLoop(cfg.Unhandled)
 	return t, nil
 }
@@ -190,6 +196,7 @@ func (t *UDPv4) Resolve(n *enode.Node) *enode.Node {
 	if n.Load(&key) != nil {
 		return n // no secp256k1 key
 	}
+	// Lookup the node by its public key.
 	result := t.LookupPubkey((*ecdsa.PublicKey)(&key))
 	for _, rn := range result {
 		if rn.ID() == n.ID() {
@@ -790,6 +797,7 @@ func (t *UDPv4) verifyENRRequest(h *packetHandlerV4, from netip.AddrPort, fromID
 	if v4wire.Expired(req.Expiration) {
 		return errExpired
 	}
+	// No endpoint proof pong exists, we don't process the packet. This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
 	if !t.checkBond(fromID, from) {
 		return errUnknownNode
 	}

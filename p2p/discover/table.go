@@ -108,7 +108,7 @@ type bucket struct {
 
 type addNodeOp struct {
 	node         *enode.Node
-	isInbound    bool
+	isInbound    bool // 加载种子节点和主动发起的，都是false
 	forceSetLive bool // for tests
 }
 
@@ -375,6 +375,7 @@ loop:
 		case r := <-tab.revalResponseCh:
 			tab.revalidation.handleResponse(tab, r)
 
+		//	增加节点
 		case op := <-tab.addNodeCh:
 			tab.mutex.Lock()
 			ok := tab.handleAddNode(op)
@@ -437,6 +438,7 @@ func (tab *Table) doRefresh(done chan struct{}) {
 	// (not hash-sized) and it is not easily possible to generate a
 	// sha3 preimage that falls into a chosen bucket.
 	// We perform a few lookups with a random target instead.
+	// 这里的意思是paper上写的是要去生成一个指定最少使用的bucket，但是这里不好生成一个落到这个bucket的target id，所以就随机生成一个target，这个target的桶也是随机的。
 	for i := 0; i < 3; i++ {
 		tab.net.lookupRandom()
 	}
@@ -521,11 +523,13 @@ func (tab *Table) handleAddNode(req addNodeOp) bool {
 		// Already in bucket.
 		return false
 	}
+	// 如果当前活跃的entries已经满了，就不添加，先放到replacement列表中，后面可能会加入到entries中。
 	if len(b.entries) >= bucketSize {
 		// Bucket full, maybe add as replacement.
 		tab.addReplacement(b, req.node)
 		return false
 	}
+	// 看某个IP的subnet是否到达上限，如果到达上限，就不添加
 	if !tab.addIP(b, req.node.IPAddr()) {
 		// Can't add: IP limit reached.
 		return false
@@ -537,8 +541,10 @@ func (tab *Table) handleAddNode(req addNodeOp) bool {
 		wn.livenessChecks = 1
 		wn.isValidatedLive = true
 	}
+	// 加入到entires中，并看下replacements中有没有，有的话也删除了
 	b.entries = append(b.entries, wn)
 	b.replacements = deleteNode(b.replacements, wn.ID())
+	// 触发nodeAdded的一些操作 比如执行hook
 	tab.nodeAdded(b, wn)
 	return true
 }
@@ -605,6 +611,7 @@ func (tab *Table) deleteInBucket(b *bucket, id enode.ID) *tableNode {
 		tab.log.Debug("Removed dead node", "b", b.index, "id", n.ID(), "ip", n.IPAddr())
 		return nil
 	}
+	// 从replacement中随机取一个出来，然后加入到活跃的entries列表中。
 	rindex := tab.rand.Intn(len(b.replacements))
 	rep := b.replacements[rindex]
 	b.replacements = slices.Delete(b.replacements, rindex, rindex+1)

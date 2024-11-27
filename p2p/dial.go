@@ -127,7 +127,7 @@ type dialSetupFunc func(net.Conn, connFlag, *enode.Node) error
 
 type dialConfig struct {
 	self           enode.ID         // our own ID
-	maxDialPeers   int              // maximum number of dialed peers
+	maxDialPeers   int              // maximum number of dialed peers 默认为50
 	maxActiveDials int              // maximum number of active dials
 	netRestrict    *netutil.Netlist // IP netrestrict list, disabled if nil
 	resolver       nodeResolver
@@ -334,6 +334,9 @@ func (d *dialScheduler) logStats() {
 	}
 	if d.dialPeers < dialStatsPeerLimit && d.dialPeers < d.maxDialPeers {
 		d.log.Info("Looking for peers", "peercount", len(d.peers), "tried", d.doneSinceLastLog, "static", len(d.static))
+	}
+	if len(d.peers) > 0 {
+		d.log.Debug("Connected peers", "peercount", len(d.peers))
 	}
 	d.doneSinceLastLog = 0
 	d.lastStatsLog = now

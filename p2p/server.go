@@ -184,7 +184,7 @@ type Server struct {
 	lock    sync.Mutex // protects running
 	running bool
 
-	listener     net.Listener
+	listener     net.Listener // TCP listener
 	ourHandshake *protoHandshake
 	loopWG       sync.WaitGroup // loop, listenLoop
 	peerFeed     event.Feed
@@ -194,10 +194,11 @@ type Server struct {
 	localnode *enode.LocalNode
 	discv4    *discover.UDPv4
 	discv5    *discover.UDPv5
-	discmix   *enode.FairMix
+	discmix   *enode.FairMix // discovery mixer 这个是给peer
 	dialsched *dialScheduler
 
 	// This is read by the NAT port mapping loop.
+	// 这是由 NAT 端口映射循环读取的内容。
 	portMappingRegister chan *portMapping
 
 	// Channels into the run loop.
@@ -439,7 +440,8 @@ type sharedUDPConn struct {
 
 // ReadFromUDPAddrPort implements discover.UDPConn
 func (s *sharedUDPConn) ReadFromUDPAddrPort(b []byte) (n int, addr netip.AddrPort, err error) {
-	packet, ok := <-s.unhandled
+	// 从 unhandled 通道中读取未处理的数据包
+	packet, ok := <-s.unhandled // 这个目前只有v4的会往这个里面写入。
 	if !ok {
 		return 0, netip.AddrPort{}, errors.New("connection was closed")
 	}
@@ -505,12 +507,16 @@ func (srv *Server) Start() (err error) {
 			return err
 		}
 	}
+	// 设置discovery	服务
 	if err := srv.setupDiscovery(); err != nil {
 		return err
 	}
+
+	// 设置dial调度器
 	srv.setupDialScheduler()
 
 	srv.loopWG.Add(1)
+
 	go srv.run()
 	return nil
 }
@@ -578,7 +584,7 @@ func (srv *Server) setupDiscovery() error {
 			return err
 		}
 		srv.discv4 = ntab
-		srv.discmix.AddSource(ntab.RandomNodes())
+		srv.discmix.AddSource(ntab.RandomNodes()) // 给拨号的时候用
 	}
 	if srv.Config.DiscoveryV5 {
 		cfg := discover.Config{
@@ -720,6 +726,7 @@ func (srv *Server) run() {
 	defer srv.dialsched.stop()
 
 	var (
+		// peers maps node IDs to peers.
 		peers        = make(map[enode.ID]*Peer)
 		inboundCount = 0
 		trusted      = make(map[enode.ID]bool, len(srv.TrustedNodes))
@@ -731,6 +738,12 @@ func (srv *Server) run() {
 	}
 
 running:
+	// 通过 select 语句监听多个 channel，一旦其中一个 channel 准备好接收数据，就会执行对应的 case 语句。
+	// 如果多个 channel 同时准备好接收数据，select 会随机选择一个执行。
+	// 如果没有任何 case 语句准备好，select 会阻塞，直到有 case 语句准备好。
+	// 这样就实现了非阻塞的多路复用。
+	// peers 也不需要加锁，因为 peers 只在 run 函数中被访问，而 run 函数是单线程的。
+	// 这里单线程对性能的影响不大，因为 peers 的数量通常不会很大。
 	for {
 		select {
 		case <-srv.quit:
@@ -776,6 +789,7 @@ running:
 			err := srv.addPeerChecks(peers, inboundCount, c)
 			if err == nil {
 				// The handshakes are done and it passed all checks.
+				// 完成握手并通过所有检查，将连接添加到 peers 中
 				p := srv.launchPeer(c)
 				peers[c.node.ID()] = p
 				srv.log.Debug("Adding p2p peer", "peercount", len(peers), "id", p.ID(), "conn", c.flags, "addr", p.RemoteAddr(), "name", p.Name())

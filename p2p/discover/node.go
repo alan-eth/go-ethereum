@@ -35,11 +35,11 @@ type BucketNode struct {
 // tableNode is an entry in Table.
 type tableNode struct {
 	*enode.Node
-	revalList       *revalidationList
-	addedToTable    time.Time // first time node was added to bucket or replacement list
-	addedToBucket   time.Time // time it was added in the actual bucket
-	livenessChecks  uint      // how often liveness was checked
-	isValidatedLive bool      // true if existence of node is considered validated right now
+	revalList       *revalidationList // 是一个引用，表示当前节点在哪个revalidationList中，要么是slow，要么是fast
+	addedToTable    time.Time         // first time node was added to bucket or replacement list
+	addedToBucket   time.Time         // time it was added in the actual bucket
+	livenessChecks  uint              // how often liveness was checked
+	isValidatedLive bool              // true if existence of node is considered validated right now
 }
 
 func unwrapNodes(ns []*tableNode) []*enode.Node {
@@ -62,10 +62,12 @@ type nodesByDistance struct {
 
 // push adds the given node to the list, keeping the total size below maxElems.
 func (h *nodesByDistance) push(n *enode.Node, maxElems int) {
+	// 找离n更近的节点的下标
 	ix := sort.Search(len(h.entries), func(i int) bool {
 		return enode.DistCmp(h.target, h.entries[i].ID(), n.ID()) > 0
 	})
 
+	// 找到一个插入位置，使得插入新节点后，列表仍然按距离排序。
 	end := len(h.entries)
 	if len(h.entries) < maxElems {
 		h.entries = append(h.entries, n)
