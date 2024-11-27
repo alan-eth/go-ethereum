@@ -193,23 +193,23 @@ func (c *Codec) Encode(id enode.ID, addr string, packet Packet, challenge *Whoar
 	switch {
 	case packet.Kind() == WhoareyouPacket:
 		head, err = c.encodeWhoareyou(id, packet.(*Whoareyou))
-		log.Info("send packet(whoareyou)>>>>>>>>", "packet", packetName, "to", addr)
+		log.Debug("send packet(whoareyou)>>>>>>>>", "packet", packetName, "to", addr)
 	case challenge != nil:
 		// We have an unanswered challenge, send handshake.
 		head, session, err = c.encodeHandshakeHeader(id, addr, challenge)
-		log.Info("send packet(challenge)>>>>>>>>", "packet", packetName, "to", addr)
+		log.Debug("send packet(challenge)>>>>>>>>", "packet", packetName, "to", addr)
 	default:
 		session = c.sc.session(id, addr)
 		if session != nil {
 			// There is a session, use it.
 			head, err = c.encodeMessageHeader(id, session)
-			log.Info("send packet(session)>>>>>>>>", "packet", packetName, "to", addr)
+			log.Debug("send packet(session)>>>>>>>>", "packet", packetName, "to", addr)
 		} else {
 			// No keys, send random data to kick off the handshake.
 			// 没有密钥，发送随机数据以启动握手。
 			head, msgData, err = c.encodeRandom(id)
 			packetName = "random"
-			log.Info("send packet(random)>>>>>>>>", "packet", packetName, "to", addr)
+			log.Debug("send packet(random)>>>>>>>>", "packet", packetName, "to", addr)
 		}
 	}
 
@@ -504,7 +504,7 @@ func (c *Codec) Decode(inputData []byte, addr string) (src enode.ID, n *enode.No
 		err = errInvalidFlag
 	}
 	if p != nil {
-		log.Info(fmt.Sprintf("receive packet(%d)<<<<<<<<<", int(head.Flag)), "packet", p.Name(), "from", addr)
+		log.Debug(fmt.Sprintf("receive packet(%d)<<<<<<<<<", int(head.Flag)), "packet", p.Name(), "from", addr)
 	}
 	return head.src, n, p, err
 }
