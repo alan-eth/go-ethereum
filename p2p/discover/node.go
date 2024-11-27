@@ -62,7 +62,7 @@ type nodesByDistance struct {
 
 // push adds the given node to the list, keeping the total size below maxElems.
 func (h *nodesByDistance) push(n *enode.Node, maxElems int) {
-	// 找离n更近的节点的下标
+	// 找第一个比n离target远的节点的下标
 	ix := sort.Search(len(h.entries), func(i int) bool {
 		return enode.DistCmp(h.target, h.entries[i].ID(), n.ID()) > 0
 	})
