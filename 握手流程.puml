@@ -1,0 +1,14 @@
+@startuml
+
+start
+    :setupConn，完成TCP连接后发起握手;
+    :doEncHandshake，执行RLPx握手;
+    :postHandshakeChecks, 断连检查;
+    :doProtoHandshake, 执行能力协商握手，获取对方子协议能力;
+    :addPeerChecks, 检查加入到peers连接池的条件是否满足;
+    :launchPeer，启动peer;
+    :将peer加入到peers连接池中;
+
+stop
+
+@enduml

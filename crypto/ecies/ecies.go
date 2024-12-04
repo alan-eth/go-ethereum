@@ -231,6 +231,8 @@ func symDecrypt(params *ECIESParams, key, ct []byte) (m []byte, err error) {
 // s1 and s2 contain shared information that is not part of the resulting
 // ciphertext. s1 is fed into key derivation, s2 is fed into the MAC. If the
 // shared information parameters aren't being used, they should be nil.
+//
+//	enc, err := ecies.Encrypt(rand.Reader, h.remote, h.wbuf.data, nil, prefix)
 func Encrypt(rand io.Reader, pub *PublicKey, m, s1, s2 []byte) (ct []byte, err error) {
 	params, err := pubkeyParams(pub)
 	if err != nil {
@@ -250,6 +252,7 @@ func Encrypt(rand io.Reader, pub *PublicKey, m, s1, s2 []byte) (ct []byte, err e
 	hash := params.Hash()
 	Ke, Km := deriveKeys(hash, z, s1, params.KeyLen)
 
+	// aes 加密
 	em, err := symEncrypt(rand, params, Ke, m)
 	if err != nil || len(em) <= params.BlockSize {
 		return nil, err
@@ -257,6 +260,7 @@ func Encrypt(rand io.Reader, pub *PublicKey, m, s1, s2 []byte) (ct []byte, err e
 
 	d := messageTag(params.Hash, Km, em, s2)
 
+	// 临时公钥:aes加密消息体:消息体的HMAC
 	if curve, ok := pub.Curve.(crypto.EllipticCurve); ok {
 		Rb := curve.Marshal(R.PublicKey.X, R.PublicKey.Y)
 		ct = make([]byte, len(Rb)+len(em)+len(d))
@@ -270,6 +274,7 @@ func Encrypt(rand io.Reader, pub *PublicKey, m, s1, s2 []byte) (ct []byte, err e
 
 // Decrypt decrypts an ECIES ciphertext.
 func (prv *PrivateKey) Decrypt(c, s1, s2 []byte) (m []byte, err error) {
+	// c是prefix
 	if len(c) == 0 {
 		return nil, ErrInvalidMessage
 	}
@@ -287,8 +292,11 @@ func (prv *PrivateKey) Decrypt(c, s1, s2 []byte) (m []byte, err error) {
 		mEnd   int
 	)
 
-	switch c[0] {
+	switch c[0] { //
 	case 2, 3, 4:
+		// bitsize 指的是二进制的长度，不是字节长度
+		// + 7 是curve在marshal的时候也 + 7 了，所以这里也 + 7
+		// / 4 是因为一个字节是8位，所以要先除以8，然后这里是x + y两个坐标，所以再 * 2，所以是 / 4。
 		rLen = (prv.PublicKey.Curve.Params().BitSize + 7) / 4
 		if len(c) < (rLen + hLen + 1) {
 			return nil, ErrInvalidMessage
@@ -316,9 +324,11 @@ func (prv *PrivateKey) Decrypt(c, s1, s2 []byte) (m []byte, err error) {
 		Ke, Km := deriveKeys(hash, z, s1, params.KeyLen)
 
 		d := messageTag(params.Hash, Km, c[mStart:mEnd], s2)
+		// hmac是否相等
 		if subtle.ConstantTimeCompare(c[mEnd:], d) != 1 {
 			return nil, ErrInvalidMessage
 		}
+		// aes解密消息体。
 		return symDecrypt(params, Ke, c[mStart:mEnd])
 	}
 	return nil, ErrInvalidCurve

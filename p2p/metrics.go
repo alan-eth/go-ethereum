@@ -41,8 +41,10 @@ var (
 	activeInboundPeerGauge  metrics.Gauge = metrics.NilGauge{}
 	activeOutboundPeerGauge metrics.Gauge = metrics.NilGauge{}
 
+	// ingress：入口流量
 	ingressTrafficMeter = metrics.NewRegisteredMeter("p2p/ingress", nil)
-	egressTrafficMeter  = metrics.NewRegisteredMeter("p2p/egress", nil)
+	// egress：出口流量
+	egressTrafficMeter = metrics.NewRegisteredMeter("p2p/egress", nil)
 
 	// general ingress/egress connection meters
 	serveMeter          metrics.Meter = metrics.NilMeter{}

@@ -1,0 +1,43 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+
+start
+:newDialScheduler()创建dial定时器;
+:readNodes，从discMix中读取随机lookup的节点，\n并写入到nodesIn channel中;
+
+partition 启动loop线程 {
+    :计算剩余可用的用于连接的槽位 = \n max(maxActiveDials, (maxDialPeers - dialPeers) * 2) - dialing - staticDials;
+    group 静态节点资源池存在dialTask {
+        :遍历staticPool中的dialTask;
+        repeat
+            :startDial，发起主动连接;
+            :从staticPool中移除当前dialTask;
+        repeat while (仍需要遍历？);
+    }
+    :rearmHistoryTimer, 重新设置历史dial请求的优先级定时器;
+    switch (选择当前的chan事件)
+    case (从nodesIn读取node)
+        :checkDial，检查是否可以建立连接;
+        :startDial，发起主动连接;
+
+    case (获取执行完dial的dialtask)
+        :从dialing中删除当前dial task id;
+        :如果task id是静态节点且没有dial成功\n则放回到static pool等待下次连接;
+    case (获取已经完成握手的连接)
+        :将node id加入到peers集合中;
+        :如果是静态节点则从连接冲中移除。;
+    case (收到移除peer节点的通知)
+        :从peers集合中删除收到的node id;
+        :如果是静态节点则加入到静态节点资源池中;
+    case (收到添加静态节点通知)
+        :检查是否可以建立连接;
+        :将当前节点加入到静态节点资源池;
+    case (当前历史dial请求定时器的触发时间)
+        :清理history中超时请求的记录;
+    endswitch
+
+}
+
+
+stop
+@enduml

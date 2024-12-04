@@ -1,0 +1,18 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+
+start
+:setupListening, 设置监听协程;
+:listenLoop, 启动监听;
+:设置最大握手的连接槽位;
+repeat
+    :占用未使用的槽位;
+    :读取到新的连接fd;
+    :checkInboundConn, 检查inbound连接地址是否合法，\n是否短期内重复建立的节点连接;
+    :SetUpConn，开启连接握手;
+    :释放槽位;
+repeat while(存在未使用的槽位);
+
+
+stop
+@enduml

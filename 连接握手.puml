@@ -1,0 +1,38 @@
+@startuml
+participant NodeA as a
+participant NodeB as b
+autonumber
+
+group TCP连接建立
+a -> b: dial 成功
+end group
+
+
+group RLPx身份验证握手
+a -> a: 组装认证消息authMsg
+a -> b: 发送认证消息
+a -> a: 等待认证响应消息
+b -> b: 组装认证响应消息authRespMsg
+b -> b: 创建会话状态
+b -> a: 发送认证响应消息
+a -> a: 创建会话状态
+end group
+
+group RLPx协议协商握手
+b -> b: 组装协议协商握手消息
+b -> a: 发送协商握手消息
+a -> a: 组装协议协商握手消息
+a -> b: 发送协商握手消息
+a -> a: 启动子协议线程
+b -> b: 启动子协议线程
+end group
+
+group eth子协议握手
+a -> b: 发起eth子协议握手消息Status
+b -> a: 发起eth子协议握手消息Status
+end group
+
+note right a
+完成所有的握手，开始正常的业务通信
+end note
+@enduml

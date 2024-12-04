@@ -1,0 +1,23 @@
+@startuml
+
+class dialScheduler {
+}
+
+class dialTask {
+    # int staticPoolIndex
+    # connFlag flags
+    # atomic.Pointer[enode.Node] destPtr
+    # mclock.AbsTime lastResolved
+    # time.Duration resolveDelay
+}
+
+enum connFlag {
+    # dynDialedConn
+    # staticDialedConn
+    # inboundConn
+    # trustedConn
+}
+
+dialTask --> connFlag
+
+@enduml

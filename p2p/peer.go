@@ -226,6 +226,7 @@ func (p *Peer) Inbound() bool {
 }
 
 func newPeer(log log.Logger, conn *conn, protocols []Protocol) *Peer {
+	// 找到匹配的协议
 	protomap := matchProtocols(protocols, conn.caps, conn)
 	p := &Peer{
 		rw:       conn,
@@ -252,11 +253,14 @@ func (p *Peer) run() (remoteRequested bool, err error) {
 		reason     DiscReason // sent to the peer
 	)
 	p.wg.Add(2)
+	// 监听外部请求
 	go p.readLoop(readErr)
+	// ping线程
 	go p.pingLoop()
 
 	// Start all protocol handlers.
 	writeStart <- struct{}{}
+	// 启动所有子协议。
 	p.startProtocols(writeStart, writeErr)
 
 	// Wait for an error or disconnect.
@@ -288,7 +292,9 @@ loop:
 		}
 	}
 
+	// 会关闭ping
 	close(p.closed)
+
 	p.rw.close(reason)
 	p.wg.Wait()
 	return remoteRequested, err
@@ -335,6 +341,9 @@ func (p *Peer) readLoop(errc chan<- error) {
 }
 
 func (p *Peer) handle(msg Msg) error {
+	if msg.Code == pongMsg {
+		log.Info("Received pong message", "peer", p.ID())
+	}
 	switch {
 	case msg.Code == pingMsg:
 		msg.Discard()

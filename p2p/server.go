@@ -22,6 +22,7 @@ import (
 	"cmp"
 	"crypto/ecdsa"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -500,9 +501,11 @@ func (srv *Server) Start() (err error) {
 	if err := srv.setupLocalNode(); err != nil {
 		return err
 	}
+	// 设置端口映射
 	srv.setupPortMapping()
 
 	if srv.ListenAddr != "" {
+		// 被动连接
 		if err := srv.setupListening(); err != nil {
 			return err
 		}
@@ -518,6 +521,18 @@ func (srv *Server) Start() (err error) {
 	srv.loopWG.Add(1)
 
 	go srv.run()
+	go func() {
+		for {
+			select {
+			case <-time.After(10 * time.Second):
+				peersInfos := srv.PeersInfo()
+				for _, peer := range peersInfos {
+					marshal, _ := json.Marshal(peer)
+					log.Info("PeersInfo", "peer", string(marshal))
+				}
+			}
+		}
+	}()
 	return nil
 }
 
@@ -623,6 +638,7 @@ func (srv *Server) setupDialScheduler() {
 	if srv.discv4 != nil {
 		config.resolver = srv.discv4
 	}
+	// 默认15秒
 	if config.dialer == nil {
 		config.dialer = tcpDialer{&net.Dialer{Timeout: defaultDialTimeout}}
 	}
@@ -768,6 +784,7 @@ running:
 				p.rw.set(trustedConn, false)
 			}
 
+		//	 count、remove等操作。
 		case op := <-srv.peerOp:
 			// This channel is used by Peers and PeerCount.
 			op(peers)
@@ -786,6 +803,8 @@ running:
 		case c := <-srv.checkpointAddPeer:
 			// At this point the connection is past the protocol handshake.
 			// Its capabilities are known and the remote identity is verified.
+			// 完成握手并通过所有检查，将连接添加到 peers 中
+
 			err := srv.addPeerChecks(peers, inboundCount, c)
 			if err == nil {
 				// The handshakes are done and it passed all checks.
@@ -921,9 +940,12 @@ func (srv *Server) listenLoop() {
 		}
 
 		remoteIP := netutil.AddrAddr(fd.RemoteAddr())
+		// 检查是否是合法的连接（ip地址 && 重复建立的inbound连接）
+		srv.log.Info("Accepted connection", "addr", fd.RemoteAddr(), "remoteIP", remoteIP)
 		if err := srv.checkInboundConn(remoteIP); err != nil {
 			srv.log.Debug("Rejected inbound connection", "addr", fd.RemoteAddr(), "err", err)
 			fd.Close()
+			// 如果除了问题，则后续不再执行，直接跳到一开始的地方继续监听新的tcp连接
 			slots <- struct{}{}
 			continue
 		}
@@ -933,6 +955,7 @@ func (srv *Server) listenLoop() {
 			srv.log.Trace("Accepted connection", "addr", fd.RemoteAddr())
 		}
 		go func() {
+			// 开始进行握手
 			srv.SetupConn(fd, inboundConn, nil)
 			slots <- struct{}{}
 		}()
@@ -950,7 +973,10 @@ func (srv *Server) checkInboundConn(remoteIP netip.Addr) error {
 	}
 	// Reject Internet peers that try too often.
 	now := srv.clock.Now()
+	// 按照失效时间维护的一个小顶堆
+	// 删掉一定过期的历史。
 	srv.inboundHistory.expire(now, nil)
+	// 30s内请求过 则认为重复请求过，拒绝。
 	if !netutil.AddrIsLAN(remoteIP) && srv.inboundHistory.contains(remoteIP.String()) {
 		return errors.New("too many attempts")
 	}
@@ -961,6 +987,7 @@ func (srv *Server) checkInboundConn(remoteIP netip.Addr) error {
 // SetupConn runs the handshakes and attempts to add the connection
 // as a peer. It returns when the connection has been added as a peer
 // or the handshakes have failed.
+// dialDest为nil的话说明是inbound的请求，被动连接。
 func (srv *Server) SetupConn(fd net.Conn, flags connFlag, dialDest *enode.Node) error {
 	c := &conn{fd: fd, flags: flags, cont: make(chan error)}
 	if dialDest == nil {
@@ -1017,6 +1044,7 @@ func (srv *Server) setupConn(c *conn, dialDest *enode.Node) error {
 	}
 
 	// Run the capability negotiation handshake.
+	// 能力协商握手，交换双方的子协议能力。
 	phs, err := c.doProtoHandshake(srv.ourHandshake)
 	if err != nil {
 		clog.Trace("Failed p2p handshake", "err", err)

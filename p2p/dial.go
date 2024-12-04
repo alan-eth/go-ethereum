@@ -66,6 +66,7 @@ type tcpDialer struct {
 
 func (t tcpDialer) Dial(ctx context.Context, dest *enode.Node) (net.Conn, error) {
 	addr, _ := dest.TCPEndpoint()
+	// 建立TCP连接
 	return t.d.DialContext(ctx, "tcp", addr.String())
 }
 
@@ -104,14 +105,14 @@ type dialScheduler struct {
 	// Everything below here belongs to loop and
 	// should only be accessed by code on the loop goroutine.
 	dialing   map[enode.ID]*dialTask // active tasks
-	peers     map[enode.ID]struct{}  // all connected peers
+	peers     map[enode.ID]struct{}  // all connected peers 所有已连接的节点
 	dialPeers int                    // current number of dialed peers
 
 	// The static map tracks all static dial tasks. The subset of usable static dial tasks
 	// (i.e. those passing checkDial) is kept in staticPool. The scheduler prefers
 	// launching random static tasks from the pool over launching dynamic dials from the
 	// iterator.
-	static     map[enode.ID]*dialTask
+	static     map[enode.ID]*dialTask // 这个是做什么的？
 	staticPool []*dialTask
 
 	// The dial history keeps recently dialed nodes. Members of history are not dialed.
@@ -127,7 +128,7 @@ type dialSetupFunc func(net.Conn, connFlag, *enode.Node) error
 
 type dialConfig struct {
 	self           enode.ID         // our own ID
-	maxDialPeers   int              // maximum number of dialed peers 默认为50
+	maxDialPeers   int              // maximum number of dialed peers 默认为50 / 3
 	maxActiveDials int              // maximum number of active dials
 	netRestrict    *netutil.Netlist // IP netrestrict list, disabled if nil
 	resolver       nodeResolver
@@ -187,6 +188,7 @@ func (d *dialScheduler) stop() {
 }
 
 // addStatic adds a static dial candidate.
+// 增加静态候选节点
 func (d *dialScheduler) addStatic(n *enode.Node) {
 	select {
 	case d.addStaticCh <- n:
@@ -229,35 +231,47 @@ loop:
 		// Launch new dials if slots are available.
 		slots := d.freeDialSlots()
 		slots -= d.startStaticDials(slots)
+		// 这里的意思是如果slots大于0，那么从nodesIn中读取节点，否则从nil中读取节点，
+		// 也就是如果
 		if slots > 0 {
 			nodesCh = d.nodesIn
 		} else {
 			nodesCh = nil
 		}
+		// 重新设置history的定时器， rearm是重新装填的意思，因为这里的对顶可能已经到期了，在下面被清理过，没有定时器了，需要再设置一下定时器。
 		d.rearmHistoryTimer()
+		// 每隔10s打印提一下日志
 		d.logStats()
 
 		select {
+		// 从nodesIn中读取节点
 		case node := <-nodesCh:
+			// 检查是否可以建立TCP 连接
 			if err := d.checkDial(node); err != nil {
 				d.log.Trace("Discarding dial candidate", "id", node.ID(), "ip", node.IPAddr(), "reason", err)
 			} else {
+				// 开始建立TCP连接
 				d.startDial(newDialTask(node, dynDialedConn))
 			}
 
+		//	从doneCh中读取任务
 		case task := <-d.doneCh:
 			id := task.dest().ID()
 			delete(d.dialing, id)
+			// 更新静态节点池
 			d.updateStaticPool(id)
 			d.doneSinceLastLog++
 
+		//	从addPeerCh中读取连接
 		case c := <-d.addPeerCh:
 			if c.is(dynDialedConn) || c.is(staticDialedConn) {
 				d.dialPeers++
 			}
 			id := c.node.ID()
+			// 添加到peers中
 			d.peers[id] = struct{}{}
 			// Remove from static pool because the node is now connected.
+			// 从静态池中移除 因为节点已经连接
 			task := d.static[id]
 			if task != nil && task.staticPoolIndex >= 0 {
 				d.removeFromStaticPool(task.staticPoolIndex)
@@ -269,6 +283,7 @@ loop:
 				d.dialPeers--
 			}
 			delete(d.peers, c.node.ID())
+			// 更新静态节点池
 			d.updateStaticPool(c.node.ID())
 
 		case node := <-d.addStaticCh:
@@ -295,6 +310,7 @@ loop:
 				}
 			}
 
+			// 堆顶的失效时间到了，触发回收。
 		case <-d.historyTimer.C():
 			d.expireHistory()
 
@@ -313,6 +329,7 @@ loop:
 
 // readNodes runs in its own goroutine and delivers nodes from
 // the input iterator to the nodesIn channel.
+// 从输入迭代器中读取节点并将其传递给nodesIn通道
 func (d *dialScheduler) readNodes(it enode.Iterator) {
 	defer d.wg.Done()
 
@@ -336,7 +353,7 @@ func (d *dialScheduler) logStats() {
 		d.log.Info("Looking for peers", "peercount", len(d.peers), "tried", d.doneSinceLastLog, "static", len(d.static))
 	}
 	if len(d.peers) > 0 {
-		d.log.Debug("Connected peers", "peercount", len(d.peers))
+		d.log.Info("Connected peers", "peercount", len(d.peers))
 	}
 	d.doneSinceLastLog = 0
 	d.lastStatsLog = now
@@ -398,6 +415,7 @@ func (d *dialScheduler) checkDial(n *enode.Node) error {
 }
 
 // startStaticDials starts n static dial tasks.
+// 启动静态池中的n个静态拨号任务
 func (d *dialScheduler) startStaticDials(n int) (started int) {
 	for started = 0; started < n && len(d.staticPool) > 0; started++ {
 		idx := d.rand.Intn(len(d.staticPool))
@@ -492,6 +510,7 @@ func (t *dialTask) run(d *dialScheduler) {
 }
 
 func (t *dialTask) needResolve() bool {
+	// 如果是静态节点并且目标节点的IP地址无效，则需要解析
 	return t.flags&staticDialedConn != 0 && !t.dest().IPAddr().IsValid()
 }
 
@@ -537,7 +556,7 @@ func (t *dialTask) dial(d *dialScheduler, dest *enode.Node) error {
 	fd, err := d.dialer.Dial(d.ctx, dest)
 	if err != nil {
 		addr, _ := dest.TCPEndpoint()
-		d.log.Trace("Dial error", "id", dest.ID(), "addr", addr, "conn", t.flags, "err", cleanupDialErr(err))
+		d.log.Info("Dial error", "id", dest.ID(), "addr", addr, "conn", t.flags, "err", cleanupDialErr(err))
 		dialConnectionError.Mark(1)
 		return &dialError{err}
 	}

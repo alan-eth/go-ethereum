@@ -1,0 +1,20 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+
+autonumber
+participant PeerA as a
+participant PeerB as b
+
+opt 完成协议协商握手
+    a -> b: 距离上次发送超过15s，发送PING消息
+    opt ping成功
+        b -> a: 发送PONG消息
+        a -> a: 收到PONG消息，丢弃
+    end opt
+
+    opt ping失败
+        a -> b: 发送disc消息
+        a -> a: 主动关闭连接
+    end opt
+end opt
+@enduml

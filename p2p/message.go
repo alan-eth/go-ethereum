@@ -36,10 +36,14 @@ import (
 // send it any number of times. If you want to reuse an encoded
 // structure, encode the payload into a byte array and create a
 // separate Msg with a bytes.Reader as Payload for each send.
+// 请注意，由于有效载荷读取器在发送过程中会被消耗，因此一条消息只能发送一次。无法创建一条消息并
+// 多次发送。如果要重复使用已编码的
+// 结构，请将有效载荷编码为字节数组，并为每个发送创建一个
+// 单独的消息，并使用 bytes.Reader 作为有效载荷。
 type Msg struct {
 	Code       uint64
-	Size       uint32 // Size of the raw payload
-	Payload    io.Reader
+	Size       uint32    // Size of the raw payload
+	Payload    io.Reader // 装载消息的载体
 	ReceivedAt time.Time
 
 	meterCap  Cap    // Protocol name and version for egress metering

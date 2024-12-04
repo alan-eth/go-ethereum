@@ -138,6 +138,7 @@ func (n *Notifier) Notify(id ID, data any) error {
 	} else if n.sub.ID != id {
 		panic("Notify with wrong ID")
 	}
+	// 这个是长连接，直接发送请求给对端。
 	if n.activated {
 		return n.send(n.sub, data)
 	}

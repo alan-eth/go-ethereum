@@ -477,11 +477,11 @@ func (h *handshakeState) secrets(auth, authResp []byte) (Secrets, error) {
 
 	// derive base secrets from ephemeral key agreement
 	sharedSecret := crypto.Keccak256(ecdheSecret, crypto.Keccak256(h.respNonce, h.initNonce))
-	aesSecret := crypto.Keccak256(ecdheSecret, sharedSecret)
+	aesSecret := crypto.Keccak256(ecdheSecret, sharedSecret) // 此次会话生成的aes密钥。
 	s := Secrets{
 		remote: h.remote.ExportECDSA(),
 		AES:    aesSecret,
-		MAC:    crypto.Keccak256(ecdheSecret, aesSecret),
+		MAC:    crypto.Keccak256(ecdheSecret, aesSecret), // 消息验证码
 	}
 
 	// setup sha3 instances for the MACs
@@ -518,6 +518,8 @@ func (h *handshakeState) runInitiator(conn io.ReadWriter, prv *ecdsa.PrivateKey,
 	if err != nil {
 		return s, err
 	}
+	// 封装的
+	// 前缀:临时公钥:aes加密消息体:消息体的HMAC
 	authPacket, err := h.sealEIP8(authMsg)
 	if err != nil {
 		return s, err
@@ -528,14 +530,16 @@ func (h *handshakeState) runInitiator(conn io.ReadWriter, prv *ecdsa.PrivateKey,
 	}
 
 	authRespMsg := new(authRespV4)
+	// 阻塞等待连接返回数据
 	authRespPacket, err := h.readMsg(authRespMsg, prv, conn)
 	if err != nil {
 		return s, err
 	}
+
 	if err := h.handleAuthResp(authRespMsg); err != nil {
 		return s, err
 	}
-
+	// 上面表示握手完成了
 	return h.secrets(authPacket, authRespPacket)
 }
 
@@ -548,6 +552,7 @@ func (h *handshakeState) makeAuthMsg(prv *ecdsa.PrivateKey) (*authMsgV4, error) 
 		return nil, err
 	}
 	// Generate random keypair to for ECDH.
+	// 共享密钥生成。
 	h.randomPrivKey, err = ecies.GenerateKey(rand.Reader, crypto.S256(), nil)
 	if err != nil {
 		return nil, err
@@ -558,6 +563,8 @@ func (h *handshakeState) makeAuthMsg(prv *ecdsa.PrivateKey) (*authMsgV4, error) 
 	if err != nil {
 		return nil, err
 	}
+
+	// 生成签名，这里把initNonce和token异或，然后用私钥签名。
 	signed := xor(token, h.initNonce)
 	signature, err := crypto.Sign(signed, h.randomPrivKey.ExportECDSA())
 	if err != nil {
@@ -620,8 +627,10 @@ func (h *handshakeState) readMsg(msg interface{}, prv *ecdsa.PrivateKey, r io.Re
 	}
 	// Can't use rlp.DecodeBytes here because it rejects
 	// trailing data (forward-compatibility).
+	// rlp解码消息体
 	s := rlp.NewStream(bytes.NewReader(dec), 0)
 	err = s.Decode(msg)
+
 	return h.rbuf.data[:len(prefix)+len(packet)], err
 }
 
@@ -640,6 +649,7 @@ func (h *handshakeState) sealEIP8(msg interface{}) ([]byte, error) {
 	prefix := make([]byte, 2)
 	binary.BigEndian.PutUint16(prefix, uint16(len(h.wbuf.data)+eciesOverhead))
 
+	// 前缀:临时公钥:aes加密消息体:消息体的HMAC
 	enc, err := ecies.Encrypt(rand.Reader, h.remote, h.wbuf.data, nil, prefix)
 	return append(prefix, enc...), err
 }
