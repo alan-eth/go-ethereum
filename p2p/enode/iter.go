@@ -17,6 +17,7 @@
 package enode
 
 import (
+	"github.com/ethereum/go-ethereum/log"
 	"sync"
 	"time"
 )
@@ -143,6 +144,7 @@ type FairMix struct {
 	closed  chan struct{}
 	sources []*mixSource
 	last    int
+	version string
 }
 
 type mixSource struct {
@@ -157,11 +159,15 @@ type mixSource struct {
 // before giving up and taking a node from any other source. A good way to set the timeout
 // is deciding how long you'd want to wait for a node on average. Passing a negative
 // timeout makes the mixer completely fair.
-func NewFairMix(timeout time.Duration) *FairMix {
+func NewFairMix(timeout time.Duration, version ...string) *FairMix {
+	if len(version) == 0 {
+		version = []string{"unknown"}
+	}
 	m := &FairMix{
 		fromAny: make(chan *Node),
 		closed:  make(chan struct{}),
 		timeout: timeout,
+		version: version[0],
 	}
 	return m
 }
@@ -200,6 +206,7 @@ func (m *FairMix) Close() {
 }
 
 // Next returns a node from a random source.
+// 这个是线程安全的
 func (m *FairMix) Next() bool {
 	m.cur = nil
 
@@ -271,6 +278,11 @@ func (m *FairMix) deleteSource(s *mixSource) {
 
 	for i := range m.sources {
 		if m.sources[i] == s {
+			// i = 3
+			// 1 2 3 4 5
+			// 1 2 4 5 nil
+			// 1 2 4 5 nil
+			// 1 2 4 5
 			copy(m.sources[i:], m.sources[i+1:])
 			m.sources[len(m.sources)-1] = nil
 			m.sources = m.sources[:len(m.sources)-1]
@@ -285,7 +297,9 @@ func (m *FairMix) runSource(closed chan struct{}, s *mixSource) {
 	defer close(s.next)
 	for s.it.Next() {
 		n := s.it.Node()
+		log.Trace("runSource", "version", m.version, "node", n)
 		select {
+		// 这里随机选择一个channel写入，保证公平性
 		case s.next <- n:
 		case m.fromAny <- n:
 		case <-closed:

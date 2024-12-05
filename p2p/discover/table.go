@@ -86,6 +86,7 @@ type Table struct {
 
 	nodeAddedHook   func(*bucket, *tableNode)
 	nodeRemovedHook func(*bucket, *tableNode)
+	discVersion     string // 我自己加的，用来测试下node db
 }
 
 // transport is implemented by the UDP transports.
@@ -118,7 +119,7 @@ type trackRequestOp struct {
 	success    bool
 }
 
-func newTable(t transport, db *enode.DB, cfg Config) (*Table, error) {
+func newTable(t transport, db *enode.DB, cfg Config, discVersion string) (*Table, error) {
 	cfg = cfg.withDefaults()
 	tab := &Table{
 		net:             t,
@@ -134,6 +135,7 @@ func newTable(t transport, db *enode.DB, cfg Config) (*Table, error) {
 		closeReq:        make(chan struct{}),
 		closed:          make(chan struct{}),
 		ips:             netutil.DistinctNetSet{Subnet: tableSubnet, Limit: tableIPLimit},
+		discVersion:     discVersion,
 	}
 	for i := range tab.buckets {
 		tab.buckets[i] = &bucket{

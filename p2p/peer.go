@@ -342,7 +342,7 @@ func (p *Peer) readLoop(errc chan<- error) {
 
 func (p *Peer) handle(msg Msg) error {
 	if msg.Code == pongMsg {
-		log.Info("Received pong message", "peer", p.ID())
+		log.Trace("Received pong message", "peer", p.ID())
 	}
 	switch {
 	case msg.Code == pingMsg:

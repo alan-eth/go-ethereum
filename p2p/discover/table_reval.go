@@ -150,6 +150,7 @@ func (tr *tableRevalidation) handleResponse(tab *Table, resp revalidationRespons
 	defer func() {
 		// If the node is validated and has been checked multiple times, store it in the DB.
 		if n.isValidatedLive && n.livenessChecks > 5 {
+			tab.log.Info("Table Revalidation, Node added to database", "disc version", tab.discVersion, "id", n.ID())
 			tab.db.UpdateNode(resp.n.Node)
 		}
 	}()

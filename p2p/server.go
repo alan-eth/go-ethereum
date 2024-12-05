@@ -216,6 +216,10 @@ type Server struct {
 	inboundHistory expHeap
 }
 
+func (s *Server) GetDiscMix() *enode.FairMix {
+	return s.discmix
+}
+
 type peerOpFunc func(map[enode.ID]*Peer)
 
 type peerDrop struct {

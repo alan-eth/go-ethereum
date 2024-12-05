@@ -176,7 +176,7 @@ func newUDPv5(conn UDPConn, ln *enode.LocalNode, cfg Config) (*UDPv5, error) {
 		cancelCloseCtx: cancelCloseCtx,
 	}
 	t.talk = newTalkSystem(t)
-	tab, err := newTable(t, t.db, cfg)
+	tab, err := newTable(t, t.db, cfg, "isV5")
 	if err != nil {
 		return nil, err
 	}

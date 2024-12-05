@@ -162,7 +162,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		bloomRequests:     make(chan chan *bloombits.Retrieval),
 		bloomIndexer:      core.NewBloomIndexer(chainDb, params.BloomBitsBlocks, params.BloomConfirms),
 		p2pServer:         stack.Server(),
-		discmix:           enode.NewFairMix(0),
+		discmix:           enode.NewFairMix(0, "vvvv5"),
 		shutdownTracker:   shutdowncheck.NewShutdownTracker(chainDb),
 	}
 	bcVersion := rawdb.ReadDatabaseVersion(chainDb)
@@ -395,6 +395,8 @@ func (s *Ethereum) setupDiscovery() error {
 		iter := enode.Filter(s.p2pServer.DiscoveryV5().RandomNodes(), filter)
 		s.discmix.AddSource(iter)
 	}
+
+	//s.p2pServer.GetDiscMix().AddSource(s.discmix)
 
 	return nil
 }
