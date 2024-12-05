@@ -137,6 +137,7 @@ func (b *beaconBackfiller) setMode(mode SyncMode) {
 	}
 	log.Error("Downloader sync mode changed mid-run", "old", oldMode.String(), "new", mode.String())
 	b.suspend()
+	// 里面会进行区块的回填
 	b.resume()
 }
 
@@ -366,7 +367,7 @@ func (d *Downloader) fetchHeaders(from uint64) error {
 			from++
 		}
 		if len(headers) > 0 {
-			log.Trace("Scheduling new beacon headers", "count", len(headers), "from", from-uint64(len(headers)))
+			log.Info("Scheduling new beacon headers", "count", len(headers), "from", from-uint64(len(headers)))
 			select {
 			case d.headerProcCh <- &headerTask{
 				headers: headers,
@@ -390,7 +391,7 @@ func (d *Downloader) fetchHeaders(from uint64) error {
 			}
 		}
 		// State sync still going, wait a bit for new headers and retry
-		log.Trace("Pivot not yet committed, waiting...")
+		log.Info("Pivot not yet committed, waiting...")
 		fsHeaderContCheckTimer.Reset(fsHeaderContCheck)
 		select {
 		case <-fsHeaderContCheckTimer.C:

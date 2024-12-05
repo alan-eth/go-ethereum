@@ -437,6 +437,7 @@ func (h *handler) Start(maxPeers int) {
 	go h.txBroadcastLoop()
 
 	// start sync handlers
+	// 启动同步处理器，拉取交易
 	h.txFetcher.Start()
 
 	// start peer handler tracker

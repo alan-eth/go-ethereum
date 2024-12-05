@@ -368,6 +368,7 @@ func (q *queue) Results(block bool) []*fetchResult {
 			break
 		}
 		// No items available, and not closed
+		// 这里一致阻塞在，所以这个
 		q.active.Wait()
 		closed = q.closed
 		q.lock.Unlock()
@@ -426,46 +427,6 @@ func (q *queue) stats() []interface{} {
 		"blockTasks", q.blockTaskQueue.Size(),
 		"itemSize", q.resultSize,
 	}
-}
-
-// ReserveHeaders reserves a set of headers for the given peer, skipping any
-// previously failed batches.
-func (q *queue) ReserveHeaders(p *peerConnection, count int) *fetchRequest {
-	q.lock.Lock()
-	defer q.lock.Unlock()
-
-	// Short circuit if the peer's already downloading something (sanity check to
-	// not corrupt state)
-	if _, ok := q.headerPendPool[p.id]; ok {
-		return nil
-	}
-	// Retrieve a batch of hashes, skipping previously failed ones
-	send, skip := uint64(0), []uint64{}
-	for send == 0 && !q.headerTaskQueue.Empty() {
-		from, _ := q.headerTaskQueue.Pop()
-		if q.headerPeerMiss[p.id] != nil {
-			if _, ok := q.headerPeerMiss[p.id][from]; ok {
-				skip = append(skip, from)
-				continue
-			}
-		}
-		send = from
-	}
-	// Merge all the skipped batches back
-	for _, from := range skip {
-		q.headerTaskQueue.Push(from, -int64(from))
-	}
-	// Assemble and return the block download request
-	if send == 0 {
-		return nil
-	}
-	request := &fetchRequest{
-		Peer: p,
-		From: send,
-		Time: time.Now(),
-	}
-	q.headerPendPool[p.id] = request
-	return request
 }
 
 // ReserveBodies reserves a set of body fetches for the given peer, skipping any

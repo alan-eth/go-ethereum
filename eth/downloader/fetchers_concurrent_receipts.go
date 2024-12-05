@@ -74,7 +74,7 @@ func (q *receiptQueue) unreserve(peer string) int {
 // request is responsible for converting a generic fetch request into a receipt
 // one and sending it to the remote peer for fulfillment.
 func (q *receiptQueue) request(peer *peerConnection, req *fetchRequest, resCh chan *eth.Response) (*eth.Request, error) {
-	peer.log.Trace("Requesting new batch of receipts", "count", len(req.Headers), "from", req.Headers[0].Number)
+	peer.log.Info("Requesting new batch of receipts", "count", len(req.Headers), "from", req.Headers[0].Number)
 	if q.receiptFetchHook != nil {
 		q.receiptFetchHook(req.Headers)
 	}

@@ -152,9 +152,11 @@ func (d *Downloader) concurrentFetch(queue typedQueue) error {
 					}
 				}
 			}
+			// cap大的放在前面了，peer capacity大，说明可以请求更多的数据
 			sort.Sort(&peerCapacitySort{idles, caps})
 
 			var throttled bool
+			// 针对当前空闲的连接，分配请求
 			for _, peer := range idles {
 				// Short circuit if throttling activated or there are no more
 				// queued tasks to be retrieved
@@ -167,6 +169,7 @@ func (d *Downloader) concurrentFetch(queue typedQueue) error {
 				// Reserve a chunk of fetches for a peer. A nil can mean either that
 				// no more headers are available, or that the peer is known not to
 				// have them.
+				// 为一个对等节点保留一部分数据抓取任务，返回的request是一个抓取请求
 				request, _, throttle := queue.reserve(peer, queue.capacity(peer, d.peers.rates.TargetRoundTrip()))
 				if throttle {
 					throttled = true
@@ -176,6 +179,7 @@ func (d *Downloader) concurrentFetch(queue typedQueue) error {
 					continue
 				}
 				// Fetch the chunk and make sure any errors return the hashes to the queue
+				// 这里是请求的地方
 				req, err := queue.request(peer, request, responses)
 				if err != nil {
 					// Sending the request failed, which generally means the peer

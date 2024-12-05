@@ -335,6 +335,7 @@ func (d *Downloader) synchronise(mode SyncMode, beaconPing chan struct{}) error 
 	defer d.synchronising.Store(false)
 
 	// Post a user notification of the sync (only once per session)
+	// 正常这里会打印一次
 	if d.notified.CompareAndSwap(false, true) {
 		log.Info("Block synchronisation started")
 	}
@@ -385,6 +386,7 @@ func (d *Downloader) synchronise(mode SyncMode, beaconPing chan struct{}) error 
 	if beaconPing != nil {
 		close(beaconPing)
 	}
+	//
 	return d.syncToHead()
 }
 
@@ -542,8 +544,10 @@ func (d *Downloader) syncToHead() (err error) {
 
 		fetchers = append(fetchers, func() error { return d.processSnapSyncContent() })
 	} else if mode == ethconfig.FullSync {
+		// 因为快照同步已经完成了，所以即便开启了snapesync mode也切换至full了。
 		fetchers = append(fetchers, func() error { return d.processFullSyncContent() })
 	}
+	// 生成同步？
 	return d.spawnSync(fetchers)
 }
 
@@ -553,6 +557,7 @@ func (d *Downloader) spawnSync(fetchers []func() error) error {
 	errc := make(chan error, len(fetchers))
 	d.cancelWg.Add(len(fetchers))
 	for _, fn := range fetchers {
+		// 在这里执行的
 		go func() { defer d.cancelWg.Done(); errc <- fn() }()
 	}
 	// Wait for the first error, then terminate the others.
@@ -624,10 +629,10 @@ func (d *Downloader) Terminate() {
 // available peers, reserving a chunk of blocks for each, waiting for delivery
 // and also periodically checking for timeouts.
 func (d *Downloader) fetchBodies(from uint64) error {
-	log.Debug("Downloading block bodies", "origin", from)
+	log.Info("Downloading block bodies", "origin", from)
 	err := d.concurrentFetch((*bodyQueue)(d))
 
-	log.Debug("Block body download terminated", "err", err)
+	log.Info("Block body download terminated", "err", err)
 	return err
 }
 
@@ -635,10 +640,10 @@ func (d *Downloader) fetchBodies(from uint64) error {
 // available peers, reserving a chunk of receipts for each, waiting for delivery
 // and also periodically checking for timeouts.
 func (d *Downloader) fetchReceipts(from uint64) error {
-	log.Debug("Downloading receipts", "origin", from)
+	log.Info("Downloading receipts", "origin", from)
 	err := d.concurrentFetch((*receiptQueue)(d))
 
-	log.Debug("Receipt download terminated", "err", err)
+	log.Info("Receipt download terminated", "err", err)
 	return err
 }
 
@@ -700,6 +705,7 @@ func (d *Downloader) processHeaders(origin uint64) error {
 					}
 				}
 				// If we've reached the allowed number of pending headers, stall a bit
+				// 如果队列中的头部数量超过了最大值，那么就等待一秒钟
 				for d.queue.PendingBodies() >= maxQueuedHeaders || d.queue.PendingReceipts() >= maxQueuedHeaders {
 					timer.Reset(time.Second)
 					select {
