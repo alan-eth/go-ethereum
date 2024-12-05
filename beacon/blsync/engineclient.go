@@ -75,14 +75,14 @@ func (ec *engineClient) updateLoop(headCh <-chan types.ChainHeadEvent) {
 			fork := ec.config.ForkAtEpoch(event.BeaconHead.Epoch())
 			forkName := strings.ToLower(fork.Name)
 
-			log.Debug("Calling NewPayload", "number", event.Block.NumberU64(), "hash", event.Block.Hash())
+			log.Info("Calling NewPayload", "number", event.Block.NumberU64(), "hash", event.Block.Hash())
 			if status, err := ec.callNewPayload(forkName, event); err == nil {
 				log.Info("Successful NewPayload", "number", event.Block.NumberU64(), "hash", event.Block.Hash(), "status", status)
 			} else {
 				log.Error("Failed NewPayload", "number", event.Block.NumberU64(), "hash", event.Block.Hash(), "error", err)
 			}
 
-			log.Debug("Calling ForkchoiceUpdated", "head", event.Block.Hash())
+			log.Info("Calling ForkchoiceUpdated", "head", event.Block.Hash())
 			if status, err := ec.callForkchoiceUpdated(forkName, event); err == nil {
 				log.Info("Successful ForkchoiceUpdated", "head", event.Block.Hash(), "status", status)
 			} else {

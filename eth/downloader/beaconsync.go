@@ -153,6 +153,11 @@ func (d *Downloader) SetBadBlockCallback(onBadBlock badBlockFn) {
 //
 // Internally backfilling and state sync is done the same way, but the header
 // retrieval and scheduling is replaced.
+// BeaconSync 是合并后版本的链同步方法，特点是：
+//
+//链条数据的下载不再是从创世区块（genesis）开始向后同步，
+//而是从可信的区块头（trusted head announces）向前同步，反向填充。
+
 func (d *Downloader) BeaconSync(mode SyncMode, head *types.Header, final *types.Header) error {
 	return d.beaconSync(mode, head, final, true)
 }

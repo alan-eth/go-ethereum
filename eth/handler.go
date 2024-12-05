@@ -256,10 +256,12 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 		td      = h.chain.GetTd(hash, number)
 	)
 	forkID := forkid.NewID(h.chain.Config(), genesis, number, head.Time)
+	// eth子协议业务层握手
 	if err := peer.Handshake(h.networkID, td, hash, genesis.Hash(), forkID, h.forkFilter); err != nil {
 		peer.Log().Debug("Ethereum handshake failed", "err", err)
 		return err
 	}
+
 	reject := false // reserved peer slots
 	if h.snapSync.Load() {
 		if snap == nil {
@@ -280,21 +282,26 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 	peer.Log().Debug("Ethereum peer connected", "name", peer.Name())
 
 	// Register the peer locally
+	// 注册peer到eth handler中 eth handler可以理解为是子协议的业务层
 	if err := h.peers.registerPeer(peer, snap); err != nil {
 		peer.Log().Error("Ethereum peer registration failed", "err", err)
 		return err
 	}
 	defer h.unregisterPeer(peer.ID())
 
+	// 获取peer的信息
 	p := h.peers.peer(peer.ID())
 	if p == nil {
 		return errors.New("peer dropped during handling")
 	}
+
 	// Register the peer in the downloader. If the downloader considers it banned, we disconnect
+	// 注册peer到下载器中
 	if err := h.downloader.RegisterPeer(peer.ID(), peer.Version(), peer); err != nil {
 		peer.Log().Error("Failed to register peer in eth syncer", "err", err)
 		return err
 	}
+	// Register the peer in the snap syncer if it supports snap sync
 	if snap != nil {
 		if err := h.downloader.SnapSyncer.Register(snap); err != nil {
 			peer.Log().Error("Failed to register peer in snap syncer", "err", err)
@@ -303,6 +310,7 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 	}
 	// Propagate existing transactions. new transactions appearing
 	// after this will be sent via broadcasts.
+	// 传播现有的交易，之后出现的新交易将通过广播发送
 	h.syncTransactions(peer)
 
 	// Create a notification channel for pending requests if the peer goes down
@@ -310,6 +318,7 @@ func (h *handler) runEthPeer(peer *eth.Peer, handler eth.Handler) error {
 	defer close(dead)
 
 	// If we have any explicit peer required block hashes, request them
+	// 这个requiredBlocks是在newHandler中传入的，是配置的，一般不会有这个配置项。属于是hard code的
 	for number, hash := range h.requiredBlocks {
 		resCh := make(chan *eth.Response)
 
