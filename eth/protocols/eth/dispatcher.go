@@ -190,6 +190,7 @@ func (p *Peer) dispatcher() {
 
 	for {
 		select {
+		// Handle incoming requests
 		case reqOp := <-p.reqDispatch:
 			req := reqOp.req
 			req.Sent = time.Now()
@@ -214,6 +215,7 @@ func (p *Peer) dispatcher() {
 			delete(pending, cancelOp.id)
 			cancelOp.fail <- nil
 
+		//	Handle incoming responses
 		case resOp := <-p.resDispatch:
 			res := resOp.res
 			res.Req = pending[res.id]

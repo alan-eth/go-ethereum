@@ -32,6 +32,7 @@ import (
 // the skeleton syncer has successfully reverse downloaded all the headers up to
 // the genesis block or an existing header in the database. Its operation is fully
 // directed by the skeleton sync's head/tail events.
+// beaconBackfiller 是可以在骨架同步器成功反向下载所有标头（直至创世块或数据库中的现有标头）后开始的链和状态回填。其操作完全由骨架同步的头/尾事件控制。
 type beaconBackfiller struct {
 	downloader *Downloader   // Downloader to direct via this callback implementation
 	syncMode   SyncMode      // Sync mode to use for backfilling the skeleton chains
@@ -81,6 +82,7 @@ func (b *beaconBackfiller) suspend() *types.Header {
 }
 
 // resume starts the downloader threads for backfilling state and chain data.
+// 这个是异步进行的
 func (b *beaconBackfiller) resume() {
 	b.lock.Lock()
 	if b.filling {
@@ -132,9 +134,10 @@ func (b *beaconBackfiller) setMode(mode SyncMode) {
 
 	// If the sync mode was changed mid-sync, restart. This should never ever
 	// really happen, we just handle it to detect programming errors.
-	if !updated || !filling {
+	if !updated || !filling { // 这个filling大概率是true的？
 		return
 	}
+	// 这里应该从未发生过！
 	log.Error("Downloader sync mode changed mid-run", "old", oldMode.String(), "new", mode.String())
 	b.suspend()
 	// 里面会进行区块的回填

@@ -231,34 +231,6 @@ func (p *Peer) ReplyReceiptsRLP(id uint64, receipts []rlp.RawValue) error {
 	})
 }
 
-// RequestOneHeader is a wrapper around the header query functions to fetch a
-// single header. It is used solely by the fetcher.
-// 没有用到
-func (p *Peer) RequestOneHeader(hash common.Hash, sink chan *Response) (*Request, error) {
-	p.Log().Debug("Fetching single header", "hash", hash)
-	id := rand.Uint64()
-
-	req := &Request{
-		id:   id,
-		sink: sink,
-		code: GetBlockHeadersMsg,
-		want: BlockHeadersMsg,
-		data: &GetBlockHeadersPacket{
-			RequestId: id,
-			GetBlockHeadersRequest: &GetBlockHeadersRequest{
-				Origin:  HashOrNumber{Hash: hash},
-				Amount:  uint64(1),
-				Skip:    uint64(0),
-				Reverse: false,
-			},
-		},
-	}
-	if err := p.dispatchRequest(req); err != nil {
-		return nil, err
-	}
-	return req, nil
-}
-
 // RequestHeadersByHash fetches a batch of blocks' headers corresponding to the
 // specified header query, based on the hash of an origin block.
 // beacondevsync中使用

@@ -298,8 +298,9 @@ func handleBlockHeaders(backend Backend, msg Decoder, peer *Peer) error {
 		}
 		return hashes
 	}
+	log.Info("handleBlockHeaders", "id", res.RequestId, "headers", res.BlockHeadersRequest)
 	return peer.dispatchResponse(&Response{
-		id:   res.RequestId,
+		id:   res.RequestId, // 请求ID
 		code: BlockHeadersMsg,
 		Res:  &res.BlockHeadersRequest,
 	}, metadata)
