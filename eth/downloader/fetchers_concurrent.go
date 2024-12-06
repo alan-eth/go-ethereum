@@ -106,6 +106,7 @@ func (d *Downloader) concurrentFetch(queue typedQueue) error {
 	// all trace of a timed out request is not good. We also can't just cancel
 	// the pending request altogether as that would prevent a late response from
 	// being delivered, thus never unblocking the peer.
+	// 用于存储超时的请求, stales的意思是过时的
 	stales := make(map[string]*eth.Request)
 	defer func() {
 		// Abort all requests on sync cycle cancellation. The requests may still
@@ -132,74 +133,8 @@ func (d *Downloader) concurrentFetch(queue typedQueue) error {
 				return nil
 			}
 		} else {
-			// Send a download request to all idle peers, until throttled
-			var (
-				idles []*peerConnection
-				caps  []int
-			)
-			for _, peer := range d.peers.AllPeers() {
-				pending, stale := pending[peer.id], stales[peer.id]
-				if pending == nil && stale == nil {
-					idles = append(idles, peer)
-					caps = append(caps, queue.capacity(peer, time.Second))
-				} else if stale != nil {
-					if waited := time.Since(stale.Sent); waited > timeoutGracePeriod {
-						// Request has been in flight longer than the grace period
-						// permitted it, consider the peer malicious attempting to
-						// stall the sync.
-						peer.log.Warn("Peer stalling, dropping", "waited", common.PrettyDuration(waited))
-						d.dropPeer(peer.id)
-					}
-				}
-			}
-			// cap大的放在前面了，peer capacity大，说明可以请求更多的数据
-			sort.Sort(&peerCapacitySort{idles, caps})
-
-			var throttled bool
-			// 针对当前空闲的连接，分配请求
-			for _, peer := range idles {
-				// Short circuit if throttling activated or there are no more
-				// queued tasks to be retrieved
-				if throttled {
-					break
-				}
-				if queued := queue.pending(); queued == 0 {
-					break
-				}
-				// Reserve a chunk of fetches for a peer. A nil can mean either that
-				// no more headers are available, or that the peer is known not to
-				// have them.
-				// 为一个对等节点保留一部分数据抓取任务，返回的request是一个抓取请求
-				request, _, throttle := queue.reserve(peer, queue.capacity(peer, d.peers.rates.TargetRoundTrip()))
-				if throttle {
-					throttled = true
-					throttleCounter.Inc(1)
-				}
-				if request == nil {
-					continue
-				}
-				// Fetch the chunk and make sure any errors return the hashes to the queue
-				// 这里是请求的地方
-				req, err := queue.request(peer, request, responses)
-				if err != nil {
-					// Sending the request failed, which generally means the peer
-					// was disconnected in between assignment and network send.
-					// Although all peer removal operations return allocated tasks
-					// to the queue, that is async, and we can do better here by
-					// immediately pushing the unfulfilled requests.
-					queue.unreserve(peer.id) // TODO(karalabe): This needs a non-expiration method
-					continue
-				}
-				pending[peer.id] = req
-
-				ttl := d.peers.rates.TargetTimeout()
-				ordering[req] = timeouts.Size()
-
-				timeouts.Push(req, -time.Now().Add(ttl).UnixNano())
-				if timeouts.Size() == 1 {
-					timeout.Reset(ttl)
-				}
-			}
+			// 重构了下 发送请求给idle peer
+			d.sendRequestToIdlePeer(queue, pending, stales, responses, ordering, timeouts, timeout)
 		}
 		// Wait for something to happen
 		select {
@@ -353,6 +288,80 @@ func (d *Downloader) concurrentFetch(queue typedQueue) error {
 			if !cont {
 				finished = true
 			}
+		}
+	}
+}
+
+func (d *Downloader) sendRequestToIdlePeer(queue typedQueue, pending map[string]*eth.Request, stales map[string]*eth.Request, responses chan *eth.Response, ordering map[*eth.Request]int, timeouts *prque.Prque[int64, *eth.Request], timeout *time.Timer) {
+	// Send a download request to all idle peers, until throttled
+	var (
+		idles []*peerConnection
+		caps  []int
+	)
+	// 遍历所有的peer，找到空闲的peer
+	for _, peer := range d.peers.AllPeers() {
+		pending, stale := pending[peer.id], stales[peer.id]
+		if pending == nil && stale == nil {
+			idles = append(idles, peer)
+			caps = append(caps, queue.capacity(peer, time.Second))
+		} else if stale != nil {
+			if waited := time.Since(stale.Sent); waited > timeoutGracePeriod {
+				// Request has been in flight longer than the grace period
+				// permitted it, consider the peer malicious attempting to
+				// stall the sync.
+				peer.log.Warn("Peer stalling, dropping", "waited", common.PrettyDuration(waited))
+				d.dropPeer(peer.id)
+			}
+		}
+	}
+	// cap大的放在前面了，peer capacity大，说明可以请求更多的数据
+	sort.Sort(&peerCapacitySort{idles, caps})
+
+	var throttled bool
+	// 针对当前空闲的连接，分配请求
+	for _, peer := range idles {
+		// Short circuit if throttling activated or there are no more
+		// queued tasks to be retrieved
+		if throttled {
+			break
+		}
+		// If there are no more tasks to be retrieved, break out of the loop
+		if queued := queue.pending(); queued == 0 {
+			break
+		}
+
+		// Reserve a chunk of fetches for a peer. A nil can mean either that
+		// no more headers are available, or that the peer is known not to
+		// have them.
+		// 为一个对等节点保留一部分数据抓取任务，返回的request是一个抓取请求
+		request, _, throttle := queue.reserve(peer, queue.capacity(peer, d.peers.rates.TargetRoundTrip()))
+		if throttle {
+			throttled = true
+			throttleCounter.Inc(1)
+		}
+		if request == nil {
+			continue
+		}
+		// Fetch the chunk and make sure any errors return the hashes to the queue
+		// 这里是请求的地方
+		req, err := queue.request(peer, request, responses)
+		if err != nil {
+			// Sending the request failed, which generally means the peer
+			// was disconnected in between assignment and network send.
+			// Although all peer removal operations return allocated tasks
+			// to the queue, that is async, and we can do better here by
+			// immediately pushing the unfulfilled requests.
+			queue.unreserve(peer.id) // TODO(karalabe): This needs a non-expiration method
+			continue
+		}
+		pending[peer.id] = req
+
+		ttl := d.peers.rates.TargetTimeout()
+		ordering[req] = timeouts.Size()
+
+		timeouts.Push(req, -time.Now().Add(ttl).UnixNano())
+		if timeouts.Size() == 1 {
+			timeout.Reset(ttl)
 		}
 	}
 }
