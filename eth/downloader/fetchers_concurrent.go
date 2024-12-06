@@ -144,6 +144,7 @@ func (d *Downloader) concurrentFetch(queue typedQueue) error {
 			// be dropped when they arrive
 			return errCanceled
 
+		//	节点加入或者离开
 		case event := <-peering:
 			// A peer joined or left, the tasks queue and allocations need to be
 			// checked for potential assignment or reassignment
@@ -241,48 +242,51 @@ func (d *Downloader) concurrentFetch(queue typedQueue) error {
 			}
 
 		case res := <-responses:
-			// Response arrived, it may be for an existing or an already timed
-			// out request. If the former, update the timeout heap and perhaps
-			// reschedule the timeout timer.
-			index, live := ordering[res.Req]
-			if live {
-				timeouts.Remove(index)
-				if index == 0 {
-					if !timeout.Stop() {
-						<-timeout.C
+			{
+
+				// Response arrived, it may be for an existing or an already timed
+				// out request. If the former, update the timeout heap and perhaps
+				// reschedule the timeout timer.
+				index, live := ordering[res.Req]
+				if live {
+					timeouts.Remove(index)
+					if index == 0 {
+						if !timeout.Stop() {
+							<-timeout.C
+						}
+						if timeouts.Size() > 0 {
+							_, exp := timeouts.Peek()
+							timeout.Reset(time.Until(time.Unix(0, -exp)))
+						}
 					}
-					if timeouts.Size() > 0 {
-						_, exp := timeouts.Peek()
-						timeout.Reset(time.Until(time.Unix(0, -exp)))
+					delete(ordering, res.Req)
+				}
+				// Delete the pending request (if it still exists) and mark the peer idle
+				delete(pending, res.Req.Peer)
+				delete(stales, res.Req.Peer)
+
+				// Signal the dispatcher that the round trip is done. We'll drop the
+				// peer if the data turns out to be junk.
+				res.Done <- nil
+				res.Req.Close()
+
+				// If the peer was previously banned and failed to deliver its pack
+				// in a reasonable time frame, ignore its message.
+				if peer := d.peers.Peer(res.Req.Peer); peer != nil {
+					// Deliver the received chunk of data and check chain validity
+					// 交付接收到的数据块并检查链的有效性
+					accepted, err := queue.deliver(peer, res)
+					if errors.Is(err, errInvalidChain) {
+						return err
+					}
+					// Unless a peer delivered something completely else than requested (usually
+					// caused by a timed out request which came through in the end), set it to
+					// idle. If the delivery's stale, the peer should have already been idled.
+					if !errors.Is(err, errStaleDelivery) {
+						queue.updateCapacity(peer, accepted, res.Time)
 					}
 				}
-				delete(ordering, res.Req)
 			}
-			// Delete the pending request (if it still exists) and mark the peer idle
-			delete(pending, res.Req.Peer)
-			delete(stales, res.Req.Peer)
-
-			// Signal the dispatcher that the round trip is done. We'll drop the
-			// peer if the data turns out to be junk.
-			res.Done <- nil
-			res.Req.Close()
-
-			// If the peer was previously banned and failed to deliver its pack
-			// in a reasonable time frame, ignore its message.
-			if peer := d.peers.Peer(res.Req.Peer); peer != nil {
-				// Deliver the received chunk of data and check chain validity
-				accepted, err := queue.deliver(peer, res)
-				if errors.Is(err, errInvalidChain) {
-					return err
-				}
-				// Unless a peer delivered something completely else than requested (usually
-				// caused by a timed out request which came through in the end), set it to
-				// idle. If the delivery's stale, the peer should have already been idled.
-				if !errors.Is(err, errStaleDelivery) {
-					queue.updateCapacity(peer, accepted, res.Time)
-				}
-			}
-
 		case cont := <-queue.waker():
 			// The header fetcher sent a continuation flag, check if it's done
 			if !cont {
