@@ -165,7 +165,9 @@ func (t *Tracker) Capacity(kind uint64, targetRTT time.Duration) int {
 
 	// Return an overestimation to force the peer out of a stuck minima, adding
 	// +1 in case the item count is too low for the overestimator to dent
-	return roundCapacity(1 + capacityOverestimation*throughput)
+	var res = roundCapacity(1 + capacityOverestimation*throughput)
+	log.Info("Tracker.Capacity", "kind", kind, "throughput", throughput, "targetRTT", targetRTT, " t.capacity[kind]", t.capacity[kind], "res", res)
+	return res
 }
 
 // roundCapacity gives the integer value of a capacity.

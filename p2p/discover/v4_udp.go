@@ -696,6 +696,8 @@ func (t *UDPv4) handlePing(h *packetHandlerV4, from netip.AddrPort, fromID enode
 
 	// Ping back if our last pong on file is too far in the past.
 	fromIP := from.Addr().AsSlice()
+	// 在这里会使用请求的地址和端口创建一个新的节点，而不是使用from中的端口
+	log.Debug("handlePing", "from", req.From, "fromIP", fromIP)
 	n := enode.NewV4(h.senderKey, fromIP, int(req.From.TCP), int(from.Port()))
 	if time.Since(t.db.LastPongReceived(n.ID(), from.Addr())) > bondExpiration {
 		t.sendPing(fromID, from, func() {

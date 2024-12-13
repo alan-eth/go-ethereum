@@ -32,11 +32,11 @@ import (
 // the skeleton syncer has successfully reverse downloaded all the headers up to
 // the genesis block or an existing header in the database. Its operation is fully
 // directed by the skeleton sync's head/tail events.
-// beaconBackfiller 是可以在骨架同步器成功反向下载所有标头（直至创世块或数据库中的现有标头）后开始的链和状态回填。其操作完全由骨架同步的头/尾事件控制。
+// beaconBackfiller 是可以在骨架同步器成功反向下载所有header（直至创世块或数据库中的现有header）后开始的链和状态回填。其操作完全由骨架同步的头/尾事件控制。
 type beaconBackfiller struct {
 	downloader *Downloader   // Downloader to direct via this callback implementation
 	syncMode   SyncMode      // Sync mode to use for backfilling the skeleton chains
-	success    func()        // Callback to run on successful sync cycle completion
+	success    func()        // Callback to run on successful sync cycle completion // enableSyncedFeatures方法，成功后更改syncMode为FullSync
 	filling    bool          // Flag whether the downloader is backfilling or not
 	filled     *types.Header // Last header filled by the last terminated sync loop
 	started    chan struct{} // Notification channel whether the downloader inited
@@ -203,6 +203,10 @@ func (d *Downloader) beaconSync(mode SyncMode, head *types.Header, final *types.
 // sync and on the correct chain, checking the top N links should already get us
 // a match. In the rare scenario when we ended up on a long reorganisation (i.e.
 // none of the head links match), we do a binary search to find the ancestor.
+//
+//	findBeaconAncestor 尝试定位本地链和刚刚请求的信标链的共同祖先链接。在我们的节点处于同步状态且在正确链上的一般情况下，
+//
+// 检查前 N 个链接应该已经得到匹配。在我们最终进入了一个长重组的罕见情况下（即没有一个头链接匹配），我们进行二进制搜索以查找到祖先。
 func (d *Downloader) findBeaconAncestor() (uint64, error) {
 	// Figure out the current local head position
 	var chainHead *types.Header
@@ -254,6 +258,7 @@ func (d *Downloader) findBeaconAncestor() (uint64, error) {
 		log.Warn("Beacon head lower than local chain", "beacon", number, "local", end)
 		end = number
 	}
+	// 二分查找，找到beacon和local的共同祖先
 	for start+1 < end {
 		// Split our chain interval in two, and request the hash to cross check
 		check := (start + end) / 2
@@ -291,6 +296,7 @@ func (d *Downloader) fetchHeaders(from uint64) error {
 	// them from the local chain. Note the range should be very short
 	// and it should only happen when there are less than 64 post-merge
 	// blocks in the network.
+	// 一部分header不在骨架空间中，尝试从本地链中解析它们。请注意，范围应该非常短，只有在网络中有不到 64 个后合并块时才会发生。
 	var localHeaders []*types.Header
 	if from < tail.Number.Uint64() {
 		count := tail.Number.Uint64() - from
@@ -347,7 +353,7 @@ func (d *Downloader) fetchHeaders(from uint64) error {
 
 		// Retrieve a batch of headers and feed it to the header processor
 		var (
-			headers = make([]*types.Header, 0, maxHeadersProcess)
+			headers = make([]*types.Header, 0, maxHeadersProcess) // 最大2048 headers
 			hashes  = make([]common.Hash, 0, maxHeadersProcess)
 		)
 		for i := 0; i < maxHeadersProcess && from <= head.Number.Uint64(); i++ {

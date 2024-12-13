@@ -165,6 +165,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		}
 	} else {
 		head := h.chain.CurrentBlock()
+		// 如果状态已经存在的话，说明已经同步过了，不需要再次同步，直接进入全同步
 		if head.Number.Uint64() > 0 && h.chain.HasState(head.Root) {
 			// Print warning log if database is not empty to run snap sync.
 			log.Warn("Switch sync mode from snap sync to full sync", "reason", "snap sync complete")

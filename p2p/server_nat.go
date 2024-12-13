@@ -156,7 +156,7 @@ func (srv *Server) portMappingLoop() {
 				}
 				log := newLogger(m.protocol, external, m.port)
 
-				log.Trace("Attempting port mapping")
+				log.Debug("Attempting port mapping")
 				p, err := srv.NAT.AddMapping(m.protocol, external, m.port, m.name, portMapDuration)
 				if err != nil {
 					log.Debug("Couldn't add port mapping", "err", err)
@@ -169,9 +169,9 @@ func (srv *Server) portMappingLoop() {
 				m.nextTime = srv.clock.Now().Add(portMapRefreshInterval)
 				if external != m.extPort {
 					log = newLogger(m.protocol, m.extPort, m.port)
-					log.Info("NAT mapped alternative port")
+					log.Debug("NAT mapped alternative port")
 				} else {
-					log.Info("NAT mapped port")
+					log.Debug("NAT mapped port")
 				}
 
 				// Update port in local ENR.

@@ -1,0 +1,118 @@
+@startuml
+class Downloader {
+    # atomic.Uint32 mode
+    # *queue queue
+    # *peerSet peers
+    # ethdb.Database stateDB
+    # uint64 syncStatsChainOrigin
+    # uint64 syncStatsChainHeight
+    # BlockChain blockchain
+    # *skeleton skeleton
+    # *types.Header pivotHeader
+    # *snap.Syncer SnapSyncer
+    # chan *stateSync stateSyncStart
+    # uint64 syncStartBlock
+}
+
+Downloader --> queue
+Downloader --> peerSet
+Downloader --> skeleton
+
+
+class queue {
+    # SyncMode mode
+    # common.Hash headerHead
+    # map[uint64]*types.Header headerTaskPool
+    # *prque.Prque[int64, uint64] headerTaskQueue
+    # map[string]map[uint64]struct{} headerPeerMiss
+    # map[string]*fetchRequest headerPendPool
+    # []common.Hash headerHashes
+    # []*types.Header headerResults
+    # int headerProced
+    # uint64 headerOffset
+    # map[common.Hash]*types.Header blockTaskPool
+    # *prque.Prque[int64, *types.Header] blockTaskQueue
+    # map[string]*fetchRequest blockPendPool
+    # map[common.Hash]*types.Header receiptTaskPool
+    # *prque.Prque[int64, *types.Header] receiptTaskQueue
+    # map[string]*fetchRequest receiptPendPool
+    # *resultStore resultCache
+    # common.StorageSize resultSize
+}
+
+class skeleton {
+    # ethdb.Database db
+    # backfiller filler
+    # *peerSet peers
+    # map[string]*peerConnection idles
+    # *skeletonProgress progress
+    # uint64 pulled
+    # []*types.Header scratchSpace
+    # []string scratchOwners
+    # uint64 scratchHead
+    # map[uint64]*headerRequest requests
+}
+
+class beaconBackfiller {
+    # *Downloader downloader
+    # SyncMode syncMode
+    # func success
+    # bool filling
+    # *types.Header filled
+    # chan struct{} started
+}
+
+
+skeleton --> peerConnection
+skeleton --> beaconBackfiller
+
+class peerSet {
+    # map[string]*peerConnection peers
+    # *msgrate.Trackers rates
+    # event.Feed events
+}
+
+class peerConnection {
+    # string id
+    # *msgrate.Tracker rates
+    # map[common.Hash]struct{} lacking
+    # Peer peer
+    # uint version
+}
+
+peerSet --> Trackers
+peerSet --> peerConnection
+
+
+class Trackers {
+    # map[string]*Tracker trackers
+    # time.Duration roundtrip
+    # float64 confidence
+    # time.Time tuned
+    # time.Duration OverrideTTLLimit
+}
+class Tracker {
+     # map[uint64]float64 capacity
+     # time.Duration roundtrip
+}
+
+Trackers --> Tracker
+
+skeleton --> skeletonProgress
+skeleton --> peerSet
+
+class skeletonProgress {
+    # []*subchain Subchains
+    # *uint64 Finalized
+}
+skeletonProgress --> subchain
+
+class subchain {
+    # uint64 Head
+    # uint64 Tail
+    # common.Hash Next
+}
+
+
+
+@enduml

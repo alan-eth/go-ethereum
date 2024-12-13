@@ -51,6 +51,7 @@ var (
 
 	reorgProtHeaderDelay = 2 // Number of headers to delay delivering to cover mini reorgs
 
+	// fs的意思是full sync？
 	fsHeaderSafetyNet = 2048            // Number of headers to discard in case a chain violation is detected
 	fsHeaderContCheck = 3 * time.Second // Time interval to check for header continuations during state download
 	fsMinFullBlocks   = 64              // Number of blocks to retrieve fully even in snap sync
@@ -128,8 +129,9 @@ type Downloader struct {
 	skeleton *skeleton // Header skeleton to backfill the chain with (eth2 mode)
 
 	// State sync
-	pivotHeader *types.Header // Pivot block header to dynamically push the syncing state root
-	pivotLock   sync.RWMutex  // Lock protecting pivot header reads from updates
+	pivotHeader *types.Header // Pivot block header to dynamically push the syncing state root 状态同步的哨兵
+
+	pivotLock sync.RWMutex // Lock protecting pivot header reads from updates
 
 	SnapSyncer     *snap.Syncer // TODO(karalabe): make private! hack for now
 	stateSyncStart chan *stateSync
@@ -221,8 +223,10 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, dropPeer 
 		syncStartBlock: chain.CurrentSnapBlock().Number.Uint64(),
 	}
 	// Create the post-merge skeleton syncer and start the process
+	// 骨架同步
 	dl.skeleton = newSkeleton(stateDb, dl.peers, dropPeer, newBeaconBackfiller(dl, success))
 
+	// 运行状态同步
 	go dl.stateFetcher()
 	return dl
 }
@@ -329,9 +333,11 @@ func (d *Downloader) synchronise(mode SyncMode, beaconPing chan struct{}) error 
 		}()
 	}
 	// Make sure only one goroutine is ever allowed past this point at once
+	// 先抢锁，抢到了再继续
 	if !d.synchronising.CompareAndSwap(false, true) {
 		return errBusy
 	}
+	// 释放
 	defer d.synchronising.Store(false)
 
 	// Post a user notification of the sync (only once per session)
@@ -357,15 +363,18 @@ func (d *Downloader) synchronise(mode SyncMode, beaconPing chan struct{}) error 
 		}
 	}
 	// Reset the queue, peer set and wake channels to clean any internal leftover state
+	// 同步的时候，重置一下所有的状态
 	d.queue.Reset(blockCacheMaxItems, blockCacheInitialItems)
 	d.peers.Reset()
 
+	// TODO implement me 这个是做什么用的？ 看起来wake与否都没有关系？
 	for _, ch := range []chan bool{d.queue.blockWakeCh, d.queue.receiptWakeCh} {
 		select {
 		case <-ch:
 		default:
 		}
 	}
+
 	for empty := false; !empty; {
 		select {
 		case <-d.headerProcCh:
@@ -409,23 +418,34 @@ func (d *Downloader) syncToHead() (err error) {
 	}()
 	mode := d.getMode()
 
-	log.Debug("Backfilling with the network", "mode", mode)
+	log.Info("Backfilling with the network", "mode", mode)
 	defer func(start time.Time) {
-		log.Debug("Synchronisation terminated", "elapsed", common.PrettyDuration(time.Since(start)))
+		log.Info("Synchronisation terminated", "elapsed", common.PrettyDuration(time.Since(start)))
 	}(time.Now())
 
 	// Look up the sync boundaries: the common ancestor and the target block
-	var latest, pivot, final *types.Header
-	latest, _, final, err = d.skeleton.Bounds()
+	var latest, tmp, pivot, final *types.Header
+	latest, tmp, final, err = d.skeleton.Bounds()
 	if err != nil {
 		return err
 	}
+	tmpNumber := 0
+	if tmp != nil {
+		tmpNumber = int(tmp.Number.Uint64())
+	}
+	finalNumber := 0
+	if final != nil {
+		finalNumber = int(final.Number.Uint64())
+	}
+	log.Info("Synchronisation started", "mode", mode, "latest", latest.Number, "tmp", tmpNumber, "final", finalNumber)
 	if latest.Number.Uint64() > uint64(fsMinFullBlocks) {
 		number := latest.Number.Uint64() - uint64(fsMinFullBlocks)
 
 		// Retrieve the pivot header from the skeleton chain segment but
 		// fallback to local chain if it's not found in skeleton space.
 		if pivot = d.skeleton.Header(number); pivot == nil {
+			log.Info("Pivot header not found in skeleton", "number", number)
+			// oldest 是尾部
 			_, oldest, _, _ := d.skeleton.Bounds() // error is already checked
 			if number < oldest.Number.Uint64() {
 				count := int(oldest.Number.Uint64() - number) // it's capped by fsMinFullBlocks
@@ -435,6 +455,8 @@ func (d *Downloader) syncToHead() (err error) {
 					log.Warn("Retrieved pivot header from local", "number", pivot.Number, "hash", pivot.Hash(), "latest", latest.Number, "oldest", oldest.Number)
 				}
 			}
+		} else {
+			log.Info("Pivot header found in skeleton", "number", pivot.Number, "hash", pivot.Hash(), "latest", latest.Number)
 		}
 		// Print an error log and return directly in case the pivot header
 		// is still not found. It means the skeleton chain is not linked
@@ -451,6 +473,11 @@ func (d *Downloader) syncToHead() (err error) {
 	if mode == ethconfig.SnapSync && pivot == nil {
 		pivot = d.blockchain.CurrentBlock()
 	}
+	pivotNumber := 0
+	if pivot != nil {
+		pivotNumber = int(pivot.Number.Uint64())
+	}
+	log.Info("Starting block synchronisation", "mode", mode, "latest", latest.Number, "pivot", pivotNumber, "final", finalNumber)
 	height := latest.Number.Uint64()
 
 	// In beacon mode, use the skeleton chain for the ancestor lookup
@@ -732,6 +759,7 @@ func (d *Downloader) processHeaders(origin uint64) error {
 			d.syncStatsLock.Unlock()
 
 			// Signal the content downloaders of the availability of new tasks
+			// 触发可以下载block和receipt了
 			for _, ch := range []chan bool{d.queue.blockWakeCh, d.queue.receiptWakeCh} {
 				select {
 				case ch <- true:
@@ -743,6 +771,7 @@ func (d *Downloader) processHeaders(origin uint64) error {
 }
 
 // processFullSyncContent takes fetch results from the queue and imports them into the chain.
+// 结果有了，且从缓存中删除了，开始执行导入操作
 func (d *Downloader) processFullSyncContent() error {
 	for {
 		results := d.queue.Results(true)
@@ -770,7 +799,7 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 	}
 	// Retrieve a batch of results to import
 	first, last := results[0].Header, results[len(results)-1].Header
-	log.Debug("Inserting downloaded chain", "items", len(results),
+	log.Info("Inserting downloaded chain", "items", len(results),
 		"firstnum", first.Number, "firsthash", first.Hash(),
 		"lastnum", last.Number, "lasthash", last.Hash(),
 	)
@@ -916,6 +945,7 @@ func (d *Downloader) processSnapSyncContent() error {
 			}
 		}
 		P, beforeP, afterP := splitAroundPivot(pivot.Number.Uint64(), results)
+		// pivot后面的结果做全量导入，pivot前面的结果做snap导入
 		if err := d.commitSnapSyncData(beforeP, sync); err != nil {
 			return err
 		}
@@ -991,7 +1021,7 @@ func (d *Downloader) commitSnapSyncData(results []*fetchResult, stateSync *state
 	}
 	// Retrieve the batch of results to import
 	first, last := results[0].Header, results[len(results)-1].Header
-	log.Debug("Inserting snap-sync blocks", "items", len(results),
+	log.Info("Inserting snap-sync blocks", "items", len(results),
 		"firstnum", first.Number, "firsthash", first.Hash(),
 		"lastnumn", last.Number, "lasthash", last.Hash(),
 	)
@@ -1002,7 +1032,7 @@ func (d *Downloader) commitSnapSyncData(results []*fetchResult, stateSync *state
 		receipts[i] = result.Receipts
 	}
 	if index, err := d.blockchain.InsertReceiptChain(blocks, receipts, d.ancientLimit); err != nil {
-		log.Debug("Downloaded item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
+		log.Info("Downloaded item processing failed", "number", results[index].Header.Number, "hash", results[index].Header.Hash(), "err", err)
 		return fmt.Errorf("%w: %v", errInvalidChain, err)
 	}
 	return nil
@@ -1010,7 +1040,7 @@ func (d *Downloader) commitSnapSyncData(results []*fetchResult, stateSync *state
 
 func (d *Downloader) commitPivotBlock(result *fetchResult) error {
 	block := types.NewBlockWithHeader(result.Header).WithBody(result.body())
-	log.Debug("Committing snap sync pivot as new head", "number", block.Number(), "hash", block.Hash())
+	log.Info("Committing snap sync pivot as new head", "number", block.Number(), "hash", block.Hash())
 
 	// Commit the pivot block as the new head, will require full sync from here on
 	if _, err := d.blockchain.InsertReceiptChain([]*types.Block{block}, []types.Receipts{result.Receipts}, d.ancientLimit); err != nil {
