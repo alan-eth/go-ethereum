@@ -103,7 +103,7 @@ func TestClientSyncTreeBadNode(t *testing.T) {
 // This test checks that randomIterator finds all entries.
 func TestIterator(t *testing.T) {
 	var (
-		keys      = testKeys(30)
+		keys      = testKeys(40)
 		nodes     = testNodes(keys)
 		tree, url = makeTestTree("n", nodes, nil)
 		r         = mapResolver(tree.ToTXT("n"))

@@ -578,7 +578,7 @@ func (tab *Table) nodeAdded(b *bucket, n *tableNode) {
 	if tab.nodeAddedHook != nil {
 		tab.nodeAddedHook(b, n)
 	}
-	if metrics.Enabled {
+	if metrics.Enabled() {
 		bucketsCounter[b.index].Inc(1)
 	}
 }
@@ -588,7 +588,7 @@ func (tab *Table) nodeRemoved(b *bucket, n *tableNode) {
 	if tab.nodeRemovedHook != nil {
 		tab.nodeRemovedHook(b, n)
 	}
-	if metrics.Enabled {
+	if metrics.Enabled() {
 		bucketsCounter[b.index].Dec(1)
 	}
 }
