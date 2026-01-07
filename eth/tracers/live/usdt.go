@@ -62,6 +62,7 @@ type usdtTracer struct {
 	txFrom           common.Address
 	txTo             common.Address
 	blockNum         uint64
+	blockHash        common.Hash
 	timestamp        uint64
 	gasPrice         uint64
 	blockTransfers   []*usdtTransfer
@@ -104,6 +105,7 @@ func newUsdtTracer(cfg json.RawMessage) (*tracing.Hooks, error) {
 
 func (t *usdtTracer) onBlockStart(ev tracing.BlockEvent) {
 	t.blockNum = ev.Block.NumberU64()
+	t.blockHash = ev.Block.Hash()
 	t.timestamp = ev.Block.Time()
 
 	utc := time.Unix(int64(t.timestamp), 0).UTC()
@@ -214,6 +216,7 @@ func (t *usdtTracer) onExit(depth int, output []byte, gasUsed uint64, err error,
 				amount := new(big.Int).SetBytes(log.Data)
 				transfer := usdtTransfer{
 					BlockNumber: t.blockNum,
+					BlockHash:   t.blockHash,
 					Timestamp:   t.timestamp,
 					TxHash:      t.txHash,
 					TxFrom:      t.txFrom,
