@@ -30,6 +30,7 @@ var (
 
 type usdtTransfer struct {
 	BlockNumber uint64         `json:"blockNumber"`
+	BlockHash   common.Hash    `json:"blockHash"`
 	Timestamp   uint64         `json:"timestamp"`
 	TxHash      common.Hash    `json:"txHash"`
 	TxFrom      common.Address `json:"txFrom"`
