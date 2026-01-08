@@ -43,6 +43,15 @@ type usdtTransfer struct {
 	GasPrice    uint64         `json:"gasPrice"`
 }
 
+// blockInfo stores block metadata for reorg detection.
+// Each block's info is written to block_info_YYYYMMDD.jsonl file.
+type blockInfo struct {
+	BlockNumber uint64      `json:"blockNumber"`
+	BlockHash   common.Hash `json:"blockHash"`
+	ParentHash  common.Hash `json:"parentHash"`
+	Timestamp   uint64      `json:"timestamp"`
+}
+
 type usdtTracerConfig struct {
 	Path    string `json:"path"`
 	MaxSize int    `json:"maxSize"`
@@ -62,18 +71,21 @@ type callFrame struct {
 type usdtTracer struct {
 	mu               sync.Mutex
 	logger           *lumberjack.Logger
+	blockInfoLogger  *lumberjack.Logger // logger for block info (reorg detection)
 	callStack        []*callFrame
 	txHash           common.Hash
 	txFrom           common.Address
 	txTo             common.Address
 	blockNum         uint64
 	blockHash        common.Hash
+	parentHash       common.Hash // parent block hash for reorg detection
 	timestamp        uint64
 	gasPrice         uint64
 	blockTransfers   []*usdtTransfer
 	pendingTransfers []*usdtTransfer
 	currentDate      string
 	configPath       string
+	maxSize          int // max size for log rotation
 	txReceiptGasUsed uint64
 }
 
@@ -86,15 +98,13 @@ func newUsdtTracer(cfg json.RawMessage) (*tracing.Hooks, error) {
 		return nil, errors.New("usdt tracer output path is required")
 	}
 	configPath := config.Path
-	logger := &lumberjack.Logger{
-		Filename: filepath.Join(config.Path, "usdt_transfer.jsonl"),
-	}
-	if config.MaxSize > 0 {
-		logger.MaxSize = config.MaxSize
+	maxSize := config.MaxSize
+	if maxSize <= 0 {
+		maxSize = 100 // default 100MB
 	}
 	t := &usdtTracer{
-		logger:     logger,
 		configPath: configPath,
+		maxSize:    maxSize,
 	}
 	return &tracing.Hooks{
 		OnBlockStart: t.onBlockStart,
@@ -111,19 +121,36 @@ func newUsdtTracer(cfg json.RawMessage) (*tracing.Hooks, error) {
 func (t *usdtTracer) onBlockStart(ev tracing.BlockEvent) {
 	t.blockNum = ev.Block.NumberU64()
 	t.blockHash = ev.Block.Hash()
+	t.parentHash = ev.Block.ParentHash()
 	t.timestamp = ev.Block.Time()
 
+	// Rotate log files by UTC date
 	utc := time.Unix(int64(t.timestamp), 0).UTC()
 	dateStr := utc.Format("20060102") // YYYYMMDD
-	if t.logger == nil || t.currentDate != dateStr {
+
+	if t.logger == nil || t.blockInfoLogger == nil || t.currentDate != dateStr {
+		// Close existing loggers
 		if t.logger != nil {
 			_ = t.logger.Close()
 		}
-		logPath := filepath.Join(t.configPath, fmt.Sprintf("usdt_transfer_%s.jsonl", dateStr))
-		t.logger = &lumberjack.Logger{
-			Filename: logPath,
-			MaxSize:  t.logger.MaxSize,
+		if t.blockInfoLogger != nil {
+			_ = t.blockInfoLogger.Close()
 		}
+
+		// Create a new transfer logger
+		transferLogPath := filepath.Join(t.configPath, fmt.Sprintf("usdt_transfer_%s.jsonl", dateStr))
+		t.logger = &lumberjack.Logger{
+			Filename: transferLogPath,
+			MaxSize:  t.maxSize,
+		}
+
+		// Create a new block info logger for reorg detection
+		blockInfoLogPath := filepath.Join(t.configPath, fmt.Sprintf("block_info_%s.jsonl", dateStr))
+		t.blockInfoLogger = &lumberjack.Logger{
+			Filename: blockInfoLogPath,
+			MaxSize:  t.maxSize,
+		}
+
 		t.currentDate = dateStr
 	}
 }
@@ -131,19 +158,41 @@ func (t *usdtTracer) onBlockStart(ev tracing.BlockEvent) {
 func (t *usdtTracer) onBlockEnd(err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	// Always write block info for reorg detection (even if no transfers)
+	t.writeBlockInfo()
+
+	// Write transfer records
 	if len(t.blockTransfers) == 0 {
 		return
 	}
 	for _, transfer := range t.blockTransfers {
 		out, _ := json.Marshal(transfer)
+		out = append(out, '\n')
 		if _, err := t.logger.Write(out); err != nil {
-			fmt.Println("failed to write to usdt tracer log file", err)
-		}
-		if _, err := t.logger.Write([]byte{'\n'}); err != nil {
 			fmt.Println("failed to write to usdt tracer log file", err)
 		}
 	}
 	t.blockTransfers = nil
+}
+
+// writeBlockInfo persists block metadata for reorg detection.
+// This is called at the end of each block to record the block hash chain.
+func (t *usdtTracer) writeBlockInfo() {
+	if t.blockInfoLogger == nil {
+		return
+	}
+	info := blockInfo{
+		BlockNumber: t.blockNum,
+		BlockHash:   t.blockHash,
+		ParentHash:  t.parentHash,
+		Timestamp:   t.timestamp,
+	}
+	out, _ := json.Marshal(info)
+	out = append(out, '\n')
+	if _, err := t.blockInfoLogger.Write(out); err != nil {
+		fmt.Println("failed to write to block info log file", err)
+	}
 }
 
 func (t *usdtTracer) onTxStart(vm *tracing.VMContext, tx *types.Transaction, from common.Address) {
@@ -288,17 +337,14 @@ func (t *usdtTracer) onLog(log *types.Log) {
 }
 
 func (t *usdtTracer) onClose() {
-	if err := t.logger.Close(); err != nil {
-		fmt.Println("failed to close usdt tracer log file", err)
+	if t.logger != nil {
+		if err := t.logger.Close(); err != nil {
+			fmt.Println("failed to close usdt tracer log file", err)
+		}
 	}
-}
-
-func (t *usdtTracer) write(data any) {
-	out, _ := json.Marshal(data)
-	if _, err := t.logger.Write(out); err != nil {
-		fmt.Println("failed to write to usdt tracer log file", err)
-	}
-	if _, err := t.logger.Write([]byte{'\n'}); err != nil {
-		fmt.Println("failed to write to usdt tracer log file", err)
+	if t.blockInfoLogger != nil {
+		if err := t.blockInfoLogger.Close(); err != nil {
+			fmt.Println("failed to close block info log file", err)
+		}
 	}
 }
