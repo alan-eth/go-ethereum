@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/eth/tracers"
 	"math/big"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ethereum/go-ethereum/eth/tracers"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/tracing"
@@ -47,13 +48,17 @@ type usdtTracerConfig struct {
 	MaxSize int    `json:"maxSize"`
 }
 
+// callFrame tracks the state of a single call frame during transaction execution.
+// It uses a tree structure similar to supply.go to properly handle reverts.
 type callFrame struct {
 	Depth   int
 	To      common.Address
 	GasUsed uint64
 	Logs    []*types.Log // 本层call产生的logs
+	calls   []callFrame
 }
 
+// usdtTracer tracks USDT transfer events during block processing.
 type usdtTracer struct {
 	mu               sync.Mutex
 	logger           *lumberjack.Logger
@@ -186,6 +191,7 @@ func (t *usdtTracer) onEnter(depth int, typ byte, from, to common.Address, input
 	frame := &callFrame{
 		Depth: depth,
 		To:    to,
+		calls: make([]callFrame, 0),
 	}
 	t.callStack = append(t.callStack, frame)
 }
@@ -193,45 +199,83 @@ func (t *usdtTracer) onEnter(depth int, typ byte, from, to common.Address, input
 func (t *usdtTracer) onExit(depth int, output []byte, gasUsed uint64, err error, reverted bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	if depth == 0 {
+		if !reverted {
+			t.internalTxsHandler(t.callStack[0])
+		}
+		return
+	}
+
 	if len(t.callStack) == 0 {
 		return
 	}
+
+	// Pop the current frame
 	frame := t.callStack[len(t.callStack)-1]
 	t.callStack = t.callStack[:len(t.callStack)-1]
 	frame.GasUsed = gasUsed
 
-	// 只处理 USDT 合约
-	if strings.EqualFold(frame.To.Hex(), usdtContractAddress.Hex()) && !reverted {
-		// 遍历本层call产生的logs
-		for _, log := range frame.Logs {
-			if log.Address == usdtContractAddress && len(log.Topics) > 0 && log.Topics[0] == transferTopic {
-				from := common.Address{}
-				to := common.Address{}
-				if len(log.Topics) > 1 {
-					from.SetBytes(log.Topics[1].Bytes()[12:])
-				}
-				if len(log.Topics) > 2 {
-					to.SetBytes(log.Topics[2].Bytes()[12:])
-				}
-				amount := new(big.Int).SetBytes(log.Data)
-				transfer := usdtTransfer{
-					BlockNumber: t.blockNum,
-					BlockHash:   t.blockHash,
-					Timestamp:   t.timestamp,
-					TxHash:      t.txHash,
-					TxFrom:      t.txFrom,
-					TxTo:        t.txTo,
-					From:        from,
-					To:          to,
-					Amount:      amount,
-					GasUsed:     frame.GasUsed,
-					GasPrice:    t.gasPrice,
-				}
-				t.pendingTransfers = append(t.pendingTransfers, &transfer)
-			}
-		}
+	// If reverted, drop this frame and all its children (they won't be added to parent)
+	if reverted {
+		return
 	}
-	frame.Logs = nil
+
+	// If not reverted, add this frame as a child of the parent frame
+	size := len(t.callStack)
+	t.callStack[size-1].calls = append(t.callStack[size-1].calls, *frame)
+}
+
+func (t *usdtTracer) internalTxsHandler(frame *callFrame) {
+
+	if frame == nil {
+		return
+	}
+
+	// dfs to handle the internal calls
+	for _, call := range frame.calls {
+		callCopy := call
+		t.internalTxsHandler(&callCopy)
+	}
+
+	// extract transfer from the call frame
+	t.extractTransfer(frame)
+}
+
+func (t *usdtTracer) extractTransfer(frame *callFrame) {
+	if !strings.EqualFold(frame.To.Hex(), usdtContractAddress.Hex()) {
+		return
+	}
+
+	for _, log := range frame.Logs {
+		valid := log.Address == usdtContractAddress && len(log.Topics) > 0 && log.Topics[0] == transferTopic
+		if !valid {
+			continue
+		}
+		from := common.Address{}
+		to := common.Address{}
+		if len(log.Topics) > 1 {
+			from.SetBytes(log.Topics[1].Bytes()[12:])
+		}
+		if len(log.Topics) > 2 {
+			to.SetBytes(log.Topics[2].Bytes()[12:])
+		}
+		amount := new(big.Int).SetBytes(log.Data)
+		transfer := usdtTransfer{
+			BlockNumber: t.blockNum,
+			BlockHash:   t.blockHash,
+			Timestamp:   t.timestamp,
+			TxHash:      t.txHash,
+			TxFrom:      t.txFrom,
+			TxTo:        t.txTo,
+			From:        from,
+			To:          to,
+			Amount:      amount,
+			GasUsed:     frame.GasUsed,
+			GasPrice:    t.gasPrice,
+		}
+		t.pendingTransfers = append(t.pendingTransfers, &transfer)
+	}
 }
 
 func (t *usdtTracer) onLog(log *types.Log) {
