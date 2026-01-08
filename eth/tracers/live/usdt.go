@@ -8,15 +8,13 @@ import (
 	"fmt"
 	"math/big"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
-
-	"github.com/ethereum/go-ethereum/eth/tracers"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/eth/tracers"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -63,8 +61,8 @@ type callFrame struct {
 	Depth   int
 	To      common.Address
 	GasUsed uint64
-	Logs    []*types.Log // 本层call产生的logs
-	calls   []callFrame
+	Logs    []*types.Log // logs emitted in this call frame
+	calls   []callFrame  // child call frames
 }
 
 // usdtTracer tracks USDT transfer events during block processing.
@@ -86,7 +84,6 @@ type usdtTracer struct {
 	currentDate      string
 	configPath       string
 	maxSize          int // max size for log rotation
-	txReceiptGasUsed uint64
 }
 
 func newUsdtTracer(cfg json.RawMessage) (*tracing.Hooks, error) {
@@ -119,6 +116,9 @@ func newUsdtTracer(cfg json.RawMessage) (*tracing.Hooks, error) {
 }
 
 func (t *usdtTracer) onBlockStart(ev tracing.BlockEvent) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	t.blockNum = ev.Block.NumberU64()
 	t.blockHash = ev.Block.Hash()
 	t.parentHash = ev.Block.ParentHash()
@@ -137,14 +137,14 @@ func (t *usdtTracer) onBlockStart(ev tracing.BlockEvent) {
 			_ = t.blockInfoLogger.Close()
 		}
 
-		// Create a new transfer logger
+		// Create new transfer logger
 		transferLogPath := filepath.Join(t.configPath, fmt.Sprintf("usdt_transfer_%s.jsonl", dateStr))
 		t.logger = &lumberjack.Logger{
 			Filename: transferLogPath,
 			MaxSize:  t.maxSize,
 		}
 
-		// Create a new block info logger for reorg detection
+		// Create new block info logger for reorg detection
 		blockInfoLogPath := filepath.Join(t.configPath, fmt.Sprintf("block_info_%s.jsonl", dateStr))
 		t.blockInfoLogger = &lumberjack.Logger{
 			Filename: blockInfoLogPath,
@@ -250,9 +250,12 @@ func (t *usdtTracer) onExit(depth int, output []byte, gasUsed uint64, err error,
 	defer t.mu.Unlock()
 
 	if depth == 0 {
-		if !reverted {
+		// Process the root frame if not reverted and callStack is not empty
+		if !reverted && len(t.callStack) > 0 {
 			t.internalTxsHandler(t.callStack[0])
 		}
+		// Clear callStack to prevent memory leak?
+		t.callStack = nil
 		return
 	}
 
@@ -271,8 +274,9 @@ func (t *usdtTracer) onExit(depth int, output []byte, gasUsed uint64, err error,
 	}
 
 	// If not reverted, add this frame as a child of the parent frame
-	size := len(t.callStack)
-	t.callStack[size-1].calls = append(t.callStack[size-1].calls, *frame)
+	if len(t.callStack) > 0 {
+		t.callStack[len(t.callStack)-1].calls = append(t.callStack[len(t.callStack)-1].calls, *frame)
+	}
 }
 
 func (t *usdtTracer) internalTxsHandler(frame *callFrame) {
@@ -292,25 +296,23 @@ func (t *usdtTracer) internalTxsHandler(frame *callFrame) {
 }
 
 func (t *usdtTracer) extractTransfer(frame *callFrame) {
-	if !strings.EqualFold(frame.To.Hex(), usdtContractAddress.Hex()) {
+	// Direct address comparison is more efficient than string comparison
+	if frame.To != usdtContractAddress {
 		return
 	}
 
 	for _, log := range frame.Logs {
-		valid := log.Address == usdtContractAddress && len(log.Topics) > 0 && log.Topics[0] == transferTopic
-		if !valid {
+		if log.Address != usdtContractAddress || len(log.Topics) == 0 || log.Topics[0] != transferTopic {
 			continue
 		}
-		from := common.Address{}
-		to := common.Address{}
+		var from, to common.Address
 		if len(log.Topics) > 1 {
-			from.SetBytes(log.Topics[1].Bytes()[12:])
+			from = common.BytesToAddress(log.Topics[1].Bytes()[12:])
 		}
 		if len(log.Topics) > 2 {
-			to.SetBytes(log.Topics[2].Bytes()[12:])
+			to = common.BytesToAddress(log.Topics[2].Bytes()[12:])
 		}
-		amount := new(big.Int).SetBytes(log.Data)
-		transfer := usdtTransfer{
+		transfer := &usdtTransfer{
 			BlockNumber: t.blockNum,
 			BlockHash:   t.blockHash,
 			Timestamp:   t.timestamp,
@@ -319,18 +321,18 @@ func (t *usdtTracer) extractTransfer(frame *callFrame) {
 			TxTo:        t.txTo,
 			From:        from,
 			To:          to,
-			Amount:      amount,
+			Amount:      new(big.Int).SetBytes(log.Data),
 			GasUsed:     frame.GasUsed,
 			GasPrice:    t.gasPrice,
 		}
-		t.pendingTransfers = append(t.pendingTransfers, &transfer)
+		t.pendingTransfers = append(t.pendingTransfers, transfer)
 	}
 }
 
 func (t *usdtTracer) onLog(log *types.Log) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	// 追加到当前callFrame的logs
+	// Append USDT transfer logs to the current call frame
 	if len(t.callStack) > 0 && log.Address == usdtContractAddress && len(log.Topics) > 0 && log.Topics[0] == transferTopic {
 		t.callStack[len(t.callStack)-1].Logs = append(t.callStack[len(t.callStack)-1].Logs, log)
 	}
